@@ -2,7 +2,7 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use crate::symbol::{Symbol, SymbolTable};
 
-#[derive(PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Type {
     SelfType,
     Concrete(Symbol)

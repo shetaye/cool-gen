@@ -30,12 +30,32 @@ impl Environment {
 
     /// List all methods defined, even overriden ones. Returns tuple of (defining class, method name)
     pub fn enumerate_methods(&self) -> Vec<(Symbol, Symbol)> {
-	    vec![]
+	// let ref_c = self.current_class;
+	vec![]
     }
 
     /// List all bindings defined and their types. Returns tuple of (name, type)
     pub fn enumerate_bindings(&self) -> Vec<(Symbol, Type)> {
+	let mut bindings: HashMap<Symbol, Type> = HashMap::new();
+	for scope in self.scopes.iter() {
+	    for (sym, typ) in scope.bindings.iter() {
+		bindings.insert(sym.clone(), typ.clone());
+	    }
+	}
+	bindings.into_iter().collect()
+    }
+
+    /// List all bindings defined in the local scope. Returns tuple of (name, type)
+    pub fn enumerate_local_bindings(&self) -> Vec<(Symbol, Type)> {
+	if self.scopes.is_empty() {
 	    vec![]
+	} else {
+	    self.scopes[self.scopes.len() - 1]
+		.bindings
+		.iter()
+		.map(|(s,t)| (s.clone(), t.clone()))
+		.collect()
+	}
     }
 
     pub fn push_scope(&mut self) {
