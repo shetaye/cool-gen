@@ -3,30 +3,46 @@ use std::marker::PhantomData;
 use crate::environment::Environment;
 use crate::tree::{Type, Expr};
 use crate::symbol::Symbol;
+use rand::prelude::*;
 
 pub struct GeneratorState {}
 
-pub trait SymbolGenerator {
-    fn generate(environment: &Environment, state: &mut GeneratorState) -> Symbol;
-    fn generate_many(n: usize, environment: &Environment, state: &mut GeneratorState) -> Vec<Symbol>;
+
+pub trait Generator {
+    fn get_generator(&mut self) -> 
 }
 
-pub trait TypeGenerator {
-    fn generate(subtypes: Type, environment: &Environment, state: &mut GeneratorState) -> Type;
+pub trait SymbolGenerator: Generator {
+    fn generate(&mut self, environment: &Environment) -> Symbol;
+    fn generate_many(&mut self, n: usize, environment: &Environment) -> Vec<Symbol>;
 }
 
-pub trait ExpressionGenerator {
+pub trait TypeGenerator: Generator {
+    fn generate(&mut self, subtypes: Type, environment: &Environment) -> Type;
+}
+
+pub trait ExpressionGenerator: Generator {
     /// Generate a new expression that would typecheck to goal_type, otherwise return None
-    fn generate(goal_type: Type, environment: &Environment, state: &mut GeneratorState) -> Option<Expr>;
+    fn generate(&mut self, goal_type: Type, environment: &Environment) -> Option<Expr>;
 }
 
-pub struct AssignGenerator<S: SymbolGenerator> {
-    symbol_generator: PhantomData<S>
+
+/* ~~~ actual generators below this line ~~~ */ 
+
+pub struct AssignGenerator<T: SymbolGenerator, E: ExpressionGenerator> {
+    symbol_generator: T,
+    expression_generator: E
 }
 
-impl<S: SymbolGenerator> ExpressionGenerator for AssignGenerator<S> {
-    fn generate(goal_type: Type, environment: &Environment, state: &mut GeneratorState) -> Option<Expr> {
-	S::generate(environment, state);
-	Some(Expr::Hole(goal_type))
+impl<T: SymbolGenerator, E: ExpressionGenerator> ExpressionGenerator for AssignGenerator<T, E> {
+    fn generate(&mut self, goal_type: Type, environment: &Environment) -> Option<Expr> {
+        Some(Expr::Assignment {
+            to: self.symbol_generator.generate(environment),
+            val: Box::new(
+                self.expression_generator.generate(goal_type, environment)?
+            )
+        })
     }
 }
+
+

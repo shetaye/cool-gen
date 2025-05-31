@@ -35,53 +35,52 @@ pub enum Expr {
     Int(i64),
     Bool(bool),
     Assignment {
-	to: Symbol,
-	val: Box<Expr>
+        to: Symbol,
+        val: Box<Expr>
     },
     Dispatch {
-	on: Box<Expr>,
-	at: Option<Type>,
-	formals: Vec<Expr>
+        on: Box<Expr>,
+        at: Option<Type>,
+        formals: Vec<Expr>
     },
     If {
-	condition: Box<Expr>,
-	then: Box<Expr>,
-	else_: Box<Expr>
+        condition: Box<Expr>,
+        then: Box<Expr>,
+        else_: Box<Expr>
     },
     Loop {
-	condition: Box<Expr>,
-	body: Box<Expr>
+        condition: Box<Expr>,
+        body: Box<Expr>
     },
     Block {
-	body: Vec<Expr>
+        body: Vec<Expr>
     },
     Let {
-	binding: Symbol,
-	type_: Type,
-	body: Box<Expr>
+        binding: Symbol,
+        type_: Type,
+        body: Box<Expr>
     },
     Case {
-	arms: Vec<Expr>
+        arms: Vec<Expr>
     },
     New {
-	type_: Type
+        type_: Type
     },
     Isvoid {
-	expression: Box<Expr>
+        expression: Box<Expr>
     },
     Arithmetic {
-	op: ArithmeticOp,
-	lhs: Box<Expr>,
-	rhs: Box<Expr>
+        op: ArithmeticOp,
+        lhs: Box<Expr>,
+        rhs: Box<Expr>
     },
     Comparison {
-	op: ComparisonOp,
-	lhs: Box<Expr>,
-	rhs: Box<Expr>
+        op: ComparisonOp,
+        lhs: Box<Expr>,
+        rhs: Box<Expr>
     },
     Complement(Box<Expr>),
     Not(Box<Expr>),
-    Hole(Type)
 }
 
 pub struct Method {
@@ -131,19 +130,19 @@ pub struct Program {
 
 impl Program {
     fn new() -> Self {
-	// Create symbol table
-	let mut symbol_table = SymbolTable::new();
+        // Create symbol table
+        let mut symbol_table = SymbolTable::new();
 
-	// Create default hierarchy
-	let obj_sym = symbol_table.insert_ref("Object");
-	let obj_class = Class::new_shared_ref(obj_sym);
+	    // Create default hierarchy
+	    let obj_sym = symbol_table.insert_ref("Object");
+	    let obj_class = Class::new_shared_ref(obj_sym);
 
-	// TODO
-	
-	Self {
-	    class_hierarchy: obj_class,
-	    symbol_table
-	}
+	    // TODO
+	    
+	    Self {
+	        class_hierarchy: obj_class,
+	        symbol_table
+	    }
     }
 }
 
