@@ -2,6 +2,7 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use crate::symbol::{Symbol, SymbolTable};
 
+#[derive(Clone, Debug)]
 pub enum Type {
     SelfType,
     Concrete(Symbol)
