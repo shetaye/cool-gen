@@ -16,33 +16,33 @@ pub struct Environment {
 }
 
 impl Environment {
-    fn new(class: Rc<RefCell<Class>>) -> Self {
-	Self {
-	    current_class: class,
-	    scopes: Vec::new()
-	}
+    pub fn new(class: Rc<RefCell<Class>>) -> Self {
+        Self {
+            current_class: class,
+            scopes: Vec::new()
+        }
     }
 
     /// List all in-scope methods. Returns tuple of (defining class, method name)
-    fn materialize_methods(&self) -> Vec<(Symbol, Symbol)> {
-	vec![]
+    pub fn materialize_methods(&self) -> Vec<(Symbol, Symbol)> {
+	    vec![]
     }
 
     /// List all methods defined, even overriden ones. Returns tuple of (defining class, method name)
-    fn enumerate_methods(&self) -> Vec<(Symbol, Symbol)> {
-	vec![]
+    pub fn enumerate_methods(&self) -> Vec<(Symbol, Symbol)> {
+	    vec![]
     }
 
     /// List all bindings defined and their types. Returns tuple of (name, type)
-    fn enumerate_bindings(&self) -> Vec<(Symbol, Type)> {
-	vec![]
+    pub fn enumerate_bindings(&self) -> Vec<(Symbol, Type)> {
+	    vec![]
     }
 
-    fn push_scope(&mut self) {
-	self.scopes.push(Scope::default());
+    pub fn push_scope(&mut self) {
+	    self.scopes.push(Scope::default());
     }
 
-    fn pop_scope(&mut self) {
-	self.scopes.pop();
+    pub fn pop_scope(&mut self) {
+	    self.scopes.pop();
     }
 }
