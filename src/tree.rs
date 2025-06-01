@@ -1,23 +1,28 @@
 use std::rc::Rc;
 use std::cell::RefCell;
+use la_arena::{Arena, Idx};
 use crate::symbol::{Symbol, SymbolTable};
+use crate::environment::Environment;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Type {
     SelfType,
     Concrete(Symbol)
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct Formal {
     name: Symbol,
     type_: Type
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct CaseArm {
     name: Symbol,
     type_: Type
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum ArithmeticOp {
     Plus,
     Minus,
@@ -25,12 +30,14 @@ pub enum ArithmeticOp {
     Multiply,
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum ComparisonOp {
     LessThan,
     LessThanEqual,
     Equal
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Expr {
     String(String),
     Int(i64),
@@ -82,68 +89,123 @@ pub enum Expr {
     },
     Complement(Box<Expr>),
     Not(Box<Expr>),
+    Hole(Type)
 }
 
 pub struct Method {
-    name: Symbol,
-    formals: Vec<Formal>,
-    body: Expr
+    pub name: Symbol,
+    pub formals: Vec<Formal>,
+    pub ret_type: Type,
+    pub body: Expr
 }
 
 pub struct Attribute {
-    name: Symbol,
-    body: Option<Expr>
+    pub name: Symbol,
+    pub type_: Type,
+    pub body: Option<Expr>
 }
 
 pub struct Class {
-    name: Symbol,
-    inherits: Option<Rc<RefCell<Class>>>,
-    children: Vec<Rc<RefCell<Class>>>,
-    methods: Vec<Method>,
-    attributes: Vec<Attribute>
+    pub name: Symbol,
+    pub builtin: bool,
+    pub inherits: Option<Idx<Class>>,
+    pub children: Vec<Idx<Class>>,
+    pub methods: Vec<Method>,
+    pub attributes: Vec<Attribute>
 }
 
 impl Class {
-    fn new(s: Symbol) -> Self {
+    pub fn new(name: Symbol, builtin: bool) -> Self {
 	Class {
-	    name: s,
+	    name,
+	    builtin,
 	    inherits: None,
 	    children: Vec::new(),
 	    methods: Vec::new(),
 	    attributes: Vec::new()
 	}
     }
-
-    fn new_shared_ref(s: Symbol) -> Rc<RefCell<Self>> {
-	Rc::new(RefCell::new(Self::new(s)))
-    }
-
-    fn add_child(&mut self, c: Self) {
-	let rc = Rc::new(RefCell::new(c));
-	self.children.push(rc);
-    }
 }
 
 pub struct Program {
-    class_hierarchy: Rc<RefCell<Class>>,
-    symbol_table: SymbolTable
+    pub object: Idx<Class>,
+    pub class_arena: Arena<Class>,
+    pub symbol_table: SymbolTable
 }
 
 impl Program {
-    fn new() -> Self {
-        // Create symbol table
-        let mut symbol_table = SymbolTable::new();
+    pub fn new() -> Self {
+	let mut st = SymbolTable::new();
+	let mut cl: Arena<Class> = Arena::new();
 
-	    // Create default hierarchy
-	    let obj_sym = symbol_table.insert_ref("Object");
-	    let obj_class = Class::new_shared_ref(obj_sym);
 
-	    // TODO
-	    
-	    Self {
-	        class_hierarchy: obj_class,
-	        symbol_table
+	// Create base program
+	let object_sym = st.insert_ref("Object");
+	let object = cl.alloc(Class::new(object_sym, true));
+
+	let mut p = Program {
+	    object,
+	    class_arena: cl,
+	    symbol_table: st,
+	};
+
+	// Create default hierarchy
+	let io_sym = p.to_sym("IO");
+	p.add_class(Some(object_sym), Class::new(io_sym, true));
+
+	let string_sym = p.to_sym("String");
+	p.add_class(Some(object_sym), Class::new(string_sym, true));
+
+	let bool_sym = p.to_sym("Bool");
+	p.add_class(Some(object_sym), Class::new(bool_sym, true));
+
+	let int_sym = p.to_sym("Int");
+	p.add_class(Some(object_sym), Class::new(int_sym, true));
+
+	p
+    }
+
+    pub fn to_sym(&mut self, name: &str) -> Symbol {
+	self.symbol_table.to_sym(name)
+    }
+
+    pub fn from_sym(&self, sym: Symbol) -> &str {
+	self.symbol_table.from_sym(sym)
+    }
+
+    /// DFS to find class by name
+    pub fn lookup_class(&self, name: Symbol) -> Option<Idx<Class>> {
+	let mut st = vec![self.object];
+	while !st.is_empty() {
+	    let p = st.pop().unwrap();
+	    let c = &self.class_arena[p];
+
+	    if c.name == name {
+		return Some(p)
 	    }
+	    
+	    st.extend_from_slice(&c.children);
+	}
+	None
+    }
+
+    pub fn get_class(&self, class: Idx<Class>) -> &Class {
+	&self.class_arena[class]
+    }
+
+    pub fn get_class_mut(&mut self, class: Idx<Class>) -> &mut Class {
+	&mut self.class_arena[class]
+    }
+
+    pub fn add_class(&mut self, parent: Option<Symbol>, c: Class) -> Idx<Class> {
+	let obj = self.symbol_table.lookup("Object").unwrap();
+	let true_parent = parent.unwrap_or(obj);
+	let true_parent_idx = self.lookup_class(true_parent).unwrap();
+	let new_class_idx = self.class_arena.alloc(c);
+	self.class_arena[new_class_idx].inherits = Some(true_parent_idx);
+	let parent_class = &mut self.class_arena[true_parent_idx];
+	parent_class.children.push(new_class_idx);
+	new_class_idx
     }
 }
 
