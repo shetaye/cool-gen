@@ -12,14 +12,14 @@ pub enum Type {
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct Formal {
-    name: Symbol,
-    type_: Type
+    pub name: Symbol,
+    pub type_: Type
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct CaseArm {
-    name: Symbol,
-    type_: Type
+    pub name: Symbol,
+    pub type_: Type
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]

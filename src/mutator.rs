@@ -22,7 +22,13 @@ pub struct ProgramMutationConfig {
     max_children: usize,
     min_attributes: usize,
     max_attributes: usize,
-    p_void: f64
+    min_methods: usize,
+    max_methods: usize,
+    min_formals: usize,
+    max_formals: usize,
+    p_void: f64,
+    p_method_override: f64,
+    p_formal_shadow: f64
 }
 
 impl ProgramMutationConfig {
@@ -32,7 +38,13 @@ impl ProgramMutationConfig {
 	max_children: usize,
 	min_attributes: usize,
 	max_attributes: usize,
-	p_void: f64
+	min_methods: usize,
+	max_methods: usize,
+	min_formals: usize,
+	max_formals: usize,
+	p_void: f64,
+	p_method_override: f64,
+	p_formal_shadow: f64
     ) -> Self {
 	Self {
 	    n_classes,
@@ -40,7 +52,13 @@ impl ProgramMutationConfig {
 	    max_children,
 	    min_attributes,
 	    max_attributes,
-	    p_void
+	    min_methods,
+	    max_methods,
+	    min_formals,
+	    max_formals,
+	    p_void,
+	    p_method_override,
+	    p_formal_shadow
 	}
     }
 }
@@ -53,7 +71,13 @@ impl Default for ProgramMutationConfig {
 	    2,
 	    0,
 	    5,
+	    0,
+	    5,
+	    0,
+	    3,
+	    0.0,
 	    0.1,
+	    0.1
 	)
     }
 }
@@ -62,12 +86,17 @@ pub struct ProgramMutator {
     rng: RNG,
     config: ProgramMutationConfig,
     class_name_generator: ClassNameGenerator,
-    attribute_generator: ShallowAttributeGenerator<FreshObjectIDGenerator, SubtypeGenerator>
+    attribute_generator: ShallowAttributeGenerator<FreshObjectIDGenerator, SubtypeGenerator>,
+    method_generator: ShallowMethodGenerator<ShadowingMethodIDGenerator, SubtypeGenerator>
 }
 
 impl ProgramMutator {
     pub fn new(config: ProgramMutationConfig) -> Self {
 	let p_void = config.p_void;
+	let p_method_override = config.p_method_override;
+	let p_formal_shadow = config.p_formal_shadow;
+	let min_formals = config.min_formals;
+	let max_formals = config.max_formals;
 	Self {
 	    rng: rand::rng(),
 	    config,
@@ -76,6 +105,13 @@ impl ProgramMutator {
 		FreshObjectIDGenerator::new(),
 		SubtypeGenerator::new(),
 		p_void
+	    ),
+	    method_generator: ShallowMethodGenerator::new(
+		ShadowingMethodIDGenerator::new(p_method_override),
+		SubtypeGenerator::new(),
+		min_formals,
+		max_formals,
+		p_formal_shadow
 	    )
 	}
     }
@@ -121,8 +157,13 @@ impl Mutator<Program, ()> for ProgramMutator {
 		}
 
 		// Generate methods
-		//let n_methods: usize = self.rng.random_range(context.min_methods..context.max_methods);
-		//for _ in 0..n_methods {}
+		let n_methods: usize = self.rng.random_range(self.config.min_methods..self.config.max_methods);
+		for _ in 0..n_methods {
+		    let generation_attempt = self.method_generator.generate((), &mut Environment::new(Some(next_idx), prog));
+		    if let Some(meth) = generation_attempt {
+			prog.get_class_mut(next_idx).methods.push(meth);
+		    }
+		}
 	    }
 
 	    for c in prog.get_class(next_idx).children.iter() {

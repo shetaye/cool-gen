@@ -37,7 +37,7 @@ impl Emitter {
 
     fn enter_block(&mut self) {
 	self.indent += 1;
-	self.output.push('\n');
+	//self.output.push('\n');
     }
 
     fn exit_block(&mut self) {
@@ -56,7 +56,12 @@ impl<'a> Emittable<'a> for Expr {
 
     fn emit(&self, e: &mut Emitter, c: &'a SymbolTable) {
 	match self {
-	    _ => e.emit_inline("[EXPR]")
+	    Expr::Hole(t) => {
+		e.emit_inline("[");
+		t.emit(e, c);
+		e.emit_inline("]");
+	    },
+	    _ => e.emit_inline("[Unhandled Expr]")
 	}
     }
 }
@@ -89,6 +94,44 @@ impl<'a> Emittable<'a> for Attribute {
     }
 }
 
+impl<'a> Emittable<'a> for Formal {
+    type Context = &'a SymbolTable;
+
+    fn emit(&self, e: &mut Emitter, c: &'a SymbolTable) {
+	e.emit_inline(c.from_sym(self.name));
+	e.emit_inline(": ");
+	self.type_.emit(e,c);
+    }
+}
+
+impl<'a> Emittable<'a> for Method {
+    type Context = &'a SymbolTable;
+
+    fn emit(&self, e: &mut Emitter, c: &'a SymbolTable) {
+	e.enter_line();
+	e.emit_inline(c.from_sym(self.name));
+	e.emit_inline("(");
+	for (i,f) in self.formals.iter().enumerate() {
+	    if i > 0 {
+		e.emit_inline(", ");
+	    }
+	    f.emit(e, c);
+	}
+	e.emit_inline("): ");
+	self.ret_type.emit(e, c);
+	e.emit_inline(" {");
+	e.exit_line();
+	e.enter_block();
+	e.enter_line();
+	self.body.emit(e, c);
+	e.exit_line();
+	e.exit_block();
+	e.enter_line();
+	e.emit_inline("};");
+	e.exit_line();
+    }
+}
+
 impl<'a> Emittable<'a> for Class {
     type Context = (&'a Arena<Class>, &'a SymbolTable);
 
@@ -104,10 +147,15 @@ impl<'a> Emittable<'a> for Class {
 	    }
 	}
 	e.emit_inline(" {");
+	e.exit_line();
 	e.enter_block();
 
 	for attr in self.attributes.iter() {
 	    attr.emit(e, s);
+	}
+
+	for meth in self.methods.iter() {
+	    meth.emit(e, s);
 	}
 
 	e.exit_block();

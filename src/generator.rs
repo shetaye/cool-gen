@@ -17,6 +17,66 @@ pub trait Generator<T, C> {
 
 // Symbols
 
+const METHOD_DICT: &'static [&'static str] = &[
+    "act", "berate", "cut", "dent", "exit", "flunk", "gut", "happen",
+    "include", "jit", "kill", "lie", "make", "nuke", "oowoomp", "prep",
+    "quarry", "romp", "skip", "touch", "upskill", "vindictae",
+    "whine", "xerox", "yank", "zip"
+];
+
+pub struct ShadowingMethodIDGenerator {
+    rng: RNG,
+    p_shadow: f64
+}
+
+impl ShadowingMethodIDGenerator {
+    pub fn new(p_shadow: f64) -> Self {
+        Self {
+            p_shadow,
+            rng: rand::rng(),
+        }
+    }
+}
+
+impl Generator<Symbol, ()> for ShadowingMethodIDGenerator {
+    fn generate(&mut self, constraint: (), environment: &mut Environment) -> Option<Symbol> {
+	let shadow = self.rng.random_bool(self.p_shadow);
+
+	let mut valid: Vec<Symbol>;
+	if shadow {
+	    // Only select from in-scope items that are not in local scope
+	    valid = environment.enumerate_methods()
+		.iter()
+		.map(|(sym, _)| sym.clone())
+		.collect();
+	    // Have to do this seperately bc environment is used twice
+	    valid = valid
+		.iter()
+		.filter(|sym| !environment.peek_method(sym))
+		.map(|sym| sym.clone())
+		.collect();
+	} else {
+	    // Only select from dictionary items not used in-scope
+	    valid = METHOD_DICT 
+		.iter()
+		.map(|s| environment.to_sym(s))
+		.collect();
+	    // Have to do this seperately bc environment is used twice
+	    valid = valid
+		.iter()
+		.filter(|sym| environment.lookup_method(sym).is_none())
+		.map(|sym| sym.clone())
+		.collect();
+	    
+	}
+	match valid.len() {
+	    0 => None,
+	    l => Some(valid[self.rng.random_range(0..l)])
+	}
+    }
+}
+
+
 const OBJECTID_DICT: &'static [&'static str] = &[
     "alpha", "bravo", "charlie", "delta", "echo", "foxtrot",
     "golf", "hotel", "india", "juliett", "kilo", "lima",
@@ -24,6 +84,7 @@ const OBJECTID_DICT: &'static [&'static str] = &[
     "sierra", "tango", "uniform", "victor", "whiskey",
     "xray", "yankee", "zulu"
 ];
+
 
 pub struct FreshObjectIDGenerator {
     rng: RNG
@@ -178,6 +239,98 @@ impl<N: Generator<Symbol, ()>, T: Generator<Type, Type>> Generator<Attribute, ()
 	    type_,
 	    body
 	})
+    }
+}
+
+pub struct FormalsGenerator<N: Generator<Symbol, ()>, T: Generator<Type, Type>> {
+    name_generator: N,
+    type_generator: T
+}
+
+impl<N: Generator<Symbol, ()>, T: Generator<Type, Type>> FormalsGenerator<N,T> {
+    pub fn new(name_generator: N, type_generator: T) -> Self {
+	Self { name_generator, type_generator }
+    }
+}
+
+impl<N: Generator<Symbol, ()>, T: Generator<Type, Type>> Generator<Formal, ()> for FormalsGenerator<N,T> {
+    fn generate(&mut self, _: (), environment: &mut Environment) -> Option<Formal> {
+	// Assume that the only things in our scope are other formals
+	let name = self.name_generator.generate((), environment)?;
+
+	// Can be any type
+	let obj_sym = environment.to_sym("Object");
+	let type_ = self.type_generator.generate(Type::Concrete(obj_sym), environment)?;
+
+	Some(Formal { name, type_ })
+    }
+}
+
+pub struct ShallowMethodGenerator<N: Generator<Symbol, ()>, T: Generator<Type, Type>> {
+    rng: RNG,
+    name_generator: N,
+    type_generator: T,
+    min_formals: usize,
+    max_formals: usize,
+    formal_generator: FormalsGenerator<ShadowingObjectIDGenerator, SubtypeGenerator>
+}
+
+impl<N: Generator<Symbol, ()>, T: Generator<Type, Type>> ShallowMethodGenerator<N,T> {
+    pub fn new(name_generator: N, type_generator: T, min_formals: usize, max_formals: usize, p_shadow: f64) -> Self {
+	Self {
+	    rng: rand::rng(),
+	    name_generator,
+	    type_generator,
+	    min_formals,
+	    max_formals,
+	    formal_generator: FormalsGenerator::new(
+		ShadowingObjectIDGenerator::new(p_shadow),
+		SubtypeGenerator::new()
+	    )
+	}
+    }
+}
+
+impl<N: Generator<Symbol, ()>, T: Generator<Type, Type>> Generator<Method, ()> for ShallowMethodGenerator<N,T> {
+    fn generate(&mut self, _: (), environment: &mut Environment) -> Option<Method> {
+	
+
+	// Generate name & type
+	let name = self.name_generator.generate((), environment)?;
+
+	// Respect override rules
+	if let Some(declaring_class_sym) = environment.lookup_method(&name) {
+	    let declaring_class = environment.get_class(environment.lookup_class(declaring_class_sym).unwrap());
+	    let overriden_method = declaring_class.methods.iter().find(|a| a.name == name).unwrap();
+	    Some(Method {
+		name,
+		ret_type: overriden_method.ret_type,
+		formals: overriden_method.formals.iter().map(|f| *f).collect(),
+		body: Expr::Hole(overriden_method.ret_type)
+	    })
+	} else {
+	    // Generate formals in their own scope
+	    environment.push_scope();
+	    let mut formals: Vec<Formal> = vec![];
+	    let n_formals = self.rng.random_range(self.min_formals..self.max_formals);
+	    for _ in 0..n_formals {
+		if let Some(f) = self.formal_generator.generate((), environment) {
+		    formals.push(f);
+		}
+	    }
+	    environment.pop_scope();
+
+	    // Can be any type
+	    let obj_sym = environment.to_sym("Object");
+	    let type_ = self.type_generator.generate(Type::Concrete(obj_sym), environment)?;
+
+	    Some(Method {
+		name,
+		ret_type: type_,
+		formals,
+		body: Expr::Hole(type_)
+	    })
+	}
     }
 }
 

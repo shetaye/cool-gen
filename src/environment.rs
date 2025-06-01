@@ -65,6 +65,10 @@ impl<'a> Environment<'a> {
 	self.prog.get_class(class)
     }
 
+    pub fn lookup_class(&self, class: Symbol) -> Option<Idx<Class>> {
+	self.prog.lookup_class(class)
+    }
+
     pub fn classes(&self) -> Vec<(Symbol, Idx<Class>)> {
 	self.prog.class_arena
 	    .iter()
@@ -74,13 +78,22 @@ impl<'a> Environment<'a> {
 
     /// List all in-scope methods. Returns tuple of (method name, defining class)
     pub fn materialize_methods(&self) -> Vec<(Symbol, Symbol)> {
-	    vec![]
+	let mut materialized: HashMap<Symbol, Symbol> = HashMap::new();
+	for s in self.scopes.iter() {
+	    for (k, v) in s.methods.iter() {
+		materialized.insert(*k, *v);
+	    }
+	}
+	materialized.into_iter().collect()
     }
 
     /// List all methods defined, even overriden ones. Returns tuple of (method name, defining clas)
     pub fn enumerate_methods(&self) -> Vec<(Symbol, Symbol)> {
-	// let ref_c = self.current_class;
-	vec![]
+	self.scopes.iter()
+	    .map(|s| s.methods.iter())
+	    .flatten()
+	    .map(|(s1,s2)| (s1.clone(), s2.clone()))
+	    .collect()
     }
 
     /// List all bindings defined and their types. Returns tuple of (name, type)
@@ -107,7 +120,7 @@ impl<'a> Environment<'a> {
 	}
     }
 
-    /// Lookup a symbol in all scopes
+    /// Lookup a binding in all scopes
     pub fn lookup_binding(&self, sym: &Symbol) -> Option<Type> {
 	for s in self.scopes.iter().rev() {
 	    if let Some(t) = s.bindings.get(sym) {
@@ -117,11 +130,29 @@ impl<'a> Environment<'a> {
 	None
     }
 
-    /// Peek in local scope for a symbol
-    pub fn peek_binding(&self, s: &Symbol) -> Option<Type>{
+    /// Lookup a method in all scopes. Returns the defining class
+    pub fn lookup_method(&self, sym: &Symbol) -> Option<Symbol> {
+	for s in self.scopes.iter().rev() {
+	    if let Some(t) = s.methods.get(sym) {
+		return Some(t.clone());
+	    }
+	}
+	None
+    }
+
+    /// Peek in a local scope for a binding
+    pub fn peek_binding(&self, s: &Symbol) -> Option<Type> {
 	match self.scopes.len() {
 	    0 => None,
-	    l => self.scopes[l-1].bindings.get(s).map(|t| t.clone())
+	    l => self.scopes[l-1].bindings.get(s).map(|s| s.clone())
+	}
+    }
+
+    /// Peek in local scope for a method. Returns its presence
+    pub fn peek_method(&self, s: &Symbol) -> bool {
+	match self.scopes.len() {
+	    0 => false,
+	    l => self.scopes[l-1].methods.get(s).is_some()
 	}
     }
 
