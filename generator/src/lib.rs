@@ -11,10 +11,16 @@ pub use crate::mutator::{Mutator, ProgramMutator, ProgramMutationConfig};
 pub use crate::emit::Emit;
 pub use crate::environment::Environment;
 
-fn main() {
+pub fn generate_with_config(config: ProgramMutationConfig) -> String {
     let mut st = SymbolTable::new();
     let mut c = Program::new(&mut st);
-    let mut m = ProgramMutator::new(ProgramMutationConfig::default());
+    let mut m = ProgramMutator::new(config);
     m.mutate(&mut c, &mut st);
-    println!("{}", c.emit(&st, &c));
+    c.emit(&st, &c)
 }
+
+pub fn generate() -> String {
+    generate_with_config(ProgramMutationConfig::default())
+}
+
+

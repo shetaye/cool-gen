@@ -1,0 +1,14 @@
+[package]
+name = "harness"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+cool-gen = { path = "../generator" }
+
+[[bin]]
+name = "cool-gen-harness"
+path = "./src/main.rs"
+
+
+
