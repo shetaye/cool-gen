@@ -656,6 +656,285 @@ impl<N: Generator<ObjectSymbol, ()>, T: Generator<Type, Type>> Generator<Expr, T
     }
 }
 
+pub struct CaseGenerator<N: Generator<ObjectSymbol, ()>> {
+    rng: RNG,
+    name_generator: N,
+    min_arms: usize,
+    max_arms: usize,
+}
+
+impl<N: Generator<ObjectSymbol, ()>> CaseGenerator<N> {
+    /// `min_arms` ≥ 1, `max_arms` ≥ `min_arms`.
+    pub fn new(name_generator: N, min_arms: usize, max_arms: usize) -> Self {
+        assert!(min_arms >= 1 && max_arms >= min_arms);
+        Self {
+            rng: rand::rng(),
+            name_generator,
+            min_arms,
+            max_arms,
+        }
+    }
+}
+
+impl<N: Generator<ObjectSymbol, ()>> Generator<Expr, Type> for CaseGenerator<N> {
+    fn generate(&mut self, goal_type: Type, environment: &mut Environment) -> Option<Expr> {
+        // 1) Collect all concrete subtypes of `goal_type` (including `goal_type` itself).
+        let mut candidates = environment.subtypes_of(goal_type, true);
+        if candidates.is_empty() {
+            // If there are no subtypes to choose from, we can't build any arms.
+            return None;
+        }
+
+        // 2) Decide how many arms to make
+        let mut num_arms = self.rng.random_range(self.min_arms..=self.max_arms);
+        if num_arms > candidates.len() {
+            num_arms = candidates.len();
+        }
+
+        // 3) Randomly pick `num_arms` distinct types from `candidates`
+        candidates.shuffle(&mut self.rng);
+        let chosen_types: Vec<Type> = candidates.into_iter().take(num_arms).collect();
+
+        // 4) For each chosen type, build a CaseArm:
+        //    - generate a fresh name
+        //    - assign that type
+        //    - body is a Hole of that type
+        let mut arms = Vec::with_capacity(num_arms);
+        for arm_type in chosen_types {
+            // 4a) Generate a fresh binding name
+            let name: ObjectSymbol = self.name_generator.generate((), environment)?;
+            // 4b) Body is just a hole of `arm_type`
+            let body_hole = Expr::Hole(arm_type);
+            // 4c) Construct the CaseArm
+            arms.push(CaseArm {
+                name,
+                type_: arm_type,
+                body: Box::new(body_hole),
+            });
+        }
+
+        // 5) Return the Case expression
+        Some(Expr::Case(arms))
+    }
+}
+
+pub struct ArithmeticGenerator {
+    rng: RNG,
+}
+
+impl ArithmeticGenerator {
+    pub fn new() -> Self {
+        Self {
+            rng: rand::rng(),
+        }
+    }
+}
+
+impl Generator<Expr, Type> for ArithmeticGenerator {
+    fn generate(&mut self, goal_type: Type, environment: &mut Environment) -> Option<Expr> {
+        // Only produce an arithmetic expression if the goal type is exactly Int
+        let int_sym: ClassSymbol = environment.to_sym("Int").into();
+        if goal_type != Type::Concrete(int_sym) {
+            return None;
+        }
+
+        // Randomly pick one of the four arithmetic ops
+        let op = match self.rng.random_range(0..4) {
+            0 => ArithmeticOp::Plus,
+            1 => ArithmeticOp::Minus,
+            2 => ArithmeticOp::Multiply,
+            _ => ArithmeticOp::Divide,
+        };
+
+        // Both operands are holes of type Int
+        let lhs = Expr::Hole(Type::Concrete(int_sym));
+        let rhs = Expr::Hole(Type::Concrete(int_sym));
+
+        Some(Expr::Arithmetic {
+            op,
+            lhs: Box::new(lhs),
+            rhs: Box::new(rhs),
+        })
+    }
+}
+
+pub struct ComplementGenerator {}
+
+impl ComplementGenerator {
+    pub fn new() -> Self { Self {} }
+}
+
+impl Generator<Expr, Type> for ComplementGenerator {
+    fn generate(&mut self, goal_type: Type, environment: &mut Environment) -> Option<Expr> {
+        // Only produce a complement expression if the goal type is exactly Int
+        let int_sym: ClassSymbol = environment.to_sym("Int").into();
+        if goal_type != Type::Concrete(int_sym) {
+            return None;
+        }
+
+        // Subexpression is a hole of type Int
+        let inner = Expr::Hole(Type::Concrete(int_sym));
+
+        Some(Expr::Complement(Box::new(inner)))
+    }
+}
+
+/// Generates an `Expr::Not` (logical negation) node of type Bool:
+///   `not <subexpr>`
+/// where `<subexpr>` is a hole of type Bool.
+pub struct NotGenerator { }
+
+impl NotGenerator {
+    pub fn new() -> Self { Self {} }
+}
+
+impl Generator<Expr, Type> for NotGenerator {
+    fn generate(&mut self, goal_type: Type, environment: &mut Environment) -> Option<Expr> {
+        // Only produce a `not` expression if the goal type is exactly Bool
+        let bool_sym: ClassSymbol = environment.to_sym("Bool").into();
+        if goal_type != Type::Concrete(bool_sym) {
+            return None;
+        }
+
+        // Subexpression is a hole of type Bool
+        let inner = Expr::Hole(Type::Concrete(bool_sym));
+
+        Some(Expr::Not(Box::new(inner)))
+    }
+}
+
+pub struct IsvoidGenerator {
+    rng: RNG,
+}
+
+impl IsvoidGenerator {
+    pub fn new() -> Self {
+        Self {
+            rng: rand::rng(),
+        }
+    }
+}
+
+impl Generator<Expr, Type> for IsvoidGenerator {
+    fn generate(&mut self, goal_type: Type, environment: &mut Environment) -> Option<Expr> {
+        // Only generate isvoid if the goal type is Bool
+        let bool_sym: ClassSymbol = environment.to_sym("Bool").into();
+        if goal_type != Type::Concrete(bool_sym) {
+            return None;
+        }
+
+        // Pick a random subtype of Object (including Object itself) for the inner expression
+        let object_sym: ClassSymbol = environment.to_sym("Object").into();
+        let mut candidates = environment.subtypes_of(Type::Concrete(object_sym), true);
+        if candidates.is_empty() {
+            // If no subtypes, default to Object
+            candidates.push(Type::Concrete(object_sym));
+        }
+        let chosen = candidates.choose(&mut self.rng).unwrap().clone();
+
+        // Build `isvoid (Hole(chosen))`
+        let inner = Expr::Hole(chosen);
+        Some(Expr::Isvoid(Box::new(inner)))
+    }
+}
+
+/// Generates an `Expr::Comparison` node of type Bool:
+///   `<lhs> op <rhs>`
+/// where `op` is one of:
+///   - `<` or `<=`: both operands are holes of type Int
+///   - `=`: operands are holes of a randomly chosen comparable type (Int, Bool, or String)
+pub struct ComparisonGenerator {
+    rng: RNG,
+}
+
+impl ComparisonGenerator {
+    pub fn new() -> Self {
+        Self {
+            rng: rand::rng(),
+        }
+    }
+}
+
+impl Generator<Expr, Type> for ComparisonGenerator {
+    fn generate(&mut self, goal_type: Type, environment: &mut Environment) -> Option<Expr> {
+        // Only generate comparison if the goal type is Bool
+        let bool_sym: ClassSymbol = environment.to_sym("Bool").into();
+        if goal_type != Type::Concrete(bool_sym) {
+            return None;
+        }
+
+        // Prepare the three comparison operations
+        let ops = [ComparisonOp::LessThan, ComparisonOp::LessThanEqual, ComparisonOp::Equal];
+        // Choose one at random
+        let op = *ops.choose(&mut self.rng).unwrap();
+
+        match op {
+            ComparisonOp::LessThan | ComparisonOp::LessThanEqual => {
+                // Both sides must be Int
+                let int_sym: ClassSymbol = environment.to_sym("Int").into();
+                let int_t = Type::Concrete(int_sym);
+                let lhs = Expr::Hole(int_t);
+                let rhs = Expr::Hole(int_t);
+                Some(Expr::Comparison {
+                    op,
+                    lhs: Box::new(lhs),
+                    rhs: Box::new(rhs),
+                })
+            }
+            ComparisonOp::Equal => {
+                // Pick a random comparable type among Int, Bool, String
+                let int_sym: ClassSymbol = environment.to_sym("Int").into();
+                let bool_sym: ClassSymbol = environment.to_sym("Bool").into();
+                let str_sym: ClassSymbol = environment.to_sym("String").into();
+                let choices = [
+                    Type::Concrete(int_sym),
+                    Type::Concrete(bool_sym),
+                    Type::Concrete(str_sym),
+                ];
+                let chosen_t = *choices.choose(&mut self.rng).unwrap();
+                let lhs = Expr::Hole(chosen_t);
+                let rhs = Expr::Hole(chosen_t);
+                Some(Expr::Comparison {
+                    op,
+                    lhs: Box::new(lhs),
+                    rhs: Box::new(rhs),
+                })
+            }
+        }
+    }
+}
+
+
+pub struct VariableGenerator {
+    rng: RNG,
+}
+
+impl VariableGenerator {
+    pub fn new() -> Self {
+        Self {
+            rng: rand::rng(),
+        }
+    }
+}
+
+impl Generator<Expr, Type> for VariableGenerator {
+    fn generate(&mut self, goal_type: Type, environment: &mut Environment) -> Option<Expr> {
+        // Collect all bindings whose type == goal_type
+        let mut candidates: Vec<ObjectSymbol> = environment
+            .enumerate_bindings()
+            .into_iter()
+            .filter_map(|(sym, ty)| if ty == goal_type { Some(sym) } else { None })
+            .collect();
+
+        if candidates.is_empty() {
+            None
+        } else {
+            let choice = candidates[self.rng.random_range(0..candidates.len())];
+            Some(Expr::Variable(choice))
+        }
+    }
+}
+
 pub struct ExpressionGenerator {
     rng: RNG,
     generators: Vec<Box<dyn Generator<Expr, Type>>>,
@@ -663,7 +942,15 @@ pub struct ExpressionGenerator {
 }
 
 impl ExpressionGenerator {
-    pub fn new(p_dispatch_self: f64, p_dispatch_static: f64, p_let_shadow: f64, min_block: usize, max_block: usize) -> Self {
+    pub fn new(
+	p_dispatch_self: f64,
+	p_dispatch_static: f64,
+	p_let_shadow: f64,
+	p_case_shadow: f64,
+	min_block: usize,
+	max_block: usize,
+	min_case: usize,
+	max_case: usize) -> Self {
 	Self {
 	    rng: rand::rng(),
 	    generators: vec![
@@ -672,7 +959,14 @@ impl ExpressionGenerator {
 		Box::new(IfGenerator::new()),
 		Box::new(LoopGenerator::new()),
 		Box::new(BlockGenerator::new(min_block, max_block)),
-		Box::new(LetGenerator::new(ShadowingObjectIDGenerator::new(p_let_shadow), SubtypeGenerator::new())) 
+		Box::new(LetGenerator::new(ShadowingObjectIDGenerator::new(p_let_shadow), SubtypeGenerator::new())),
+		Box::new(CaseGenerator::new(ShadowingObjectIDGenerator::new(p_case_shadow), min_case, max_case)),
+		Box::new(ArithmeticGenerator::new()),
+		Box::new(ComplementGenerator::new()),
+		Box::new(NotGenerator::new()),
+		Box::new(IsvoidGenerator::new()),
+		Box::new(ComparisonGenerator::new()),
+		Box::new(VariableGenerator::new())
 	    ],
 	    fallback: Box::new(ConstantGenerator::new())
 	}
@@ -682,6 +976,8 @@ impl ExpressionGenerator {
 	&mut self.fallback
     }
 }
+
+
 
 impl Generator<Expr, Type> for ExpressionGenerator {
     fn generate(&mut self, goal_type: Type, environment: &mut Environment) -> Option<Expr> {

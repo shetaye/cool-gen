@@ -84,6 +84,7 @@ pub enum Expr {
     },
     Complement(Box<Expr>),
     Not(Box<Expr>),
+    Variable(ObjectSymbol),
     Hole(Type)
 }
 

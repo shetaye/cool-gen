@@ -30,12 +30,15 @@ pub struct ProgramMutationConfig {
     max_formals: usize,
     min_block: usize,
     max_block: usize,
+    min_case: usize,
+    max_case: usize,
     p_void: f64,
     p_method_override: f64,
     p_formal_shadow: f64,
     p_dispatch_self: f64,
     p_dispatch_static: f64,
-    p_let_shadow: f64
+    p_let_shadow: f64,
+    p_case_shadow: f64
 }
 
 impl ProgramMutationConfig {
@@ -52,12 +55,15 @@ impl ProgramMutationConfig {
 	max_formals: usize,
 	min_block: usize,
 	max_block: usize,
+	min_case: usize,
+	max_case: usize,
 	p_void: f64,
 	p_method_override: f64,
 	p_formal_shadow: f64,
 	p_dispatch_self: f64,
 	p_dispatch_static: f64,
-	p_let_shadow: f64
+	p_let_shadow: f64,
+	p_case_shadow: f64
     ) -> Self {
 	Self {
 	    n_rounds,
@@ -72,12 +78,15 @@ impl ProgramMutationConfig {
 	    max_formals,
 	    min_block,
 	    max_block,
+	    min_case,
+	    max_case,
 	    p_void,
 	    p_method_override,
 	    p_formal_shadow,
 	    p_dispatch_self,
 	    p_dispatch_static,
-	    p_let_shadow
+	    p_let_shadow,
+	    p_case_shadow
 	}
     }
 }
@@ -85,7 +94,7 @@ impl ProgramMutationConfig {
 impl Default for ProgramMutationConfig {
     fn default() -> Self {
 	Self::new(
-	    2,
+	    4,
 	    10,
 	    1,
 	    2,
@@ -97,12 +106,15 @@ impl Default for ProgramMutationConfig {
 	    3,
 	    2,
 	    4,
+	    2,
+	    4,
 	    0.0,
 	    0.1,
 	    0.1,
 		0.1,
 	    0.1,
-		0.1
+	    0.1,
+	    0.1
 	)
     }
 }
@@ -143,8 +155,11 @@ impl ProgramMutator {
 		config.p_dispatch_self,
 		config.p_dispatch_static,
 		config.p_let_shadow,
+		config.p_case_shadow,
 		config.min_block,
-		config.max_block
+		config.max_block,
+		config.min_case,
+		config.max_case
 	    )
 	}
     }
@@ -434,6 +449,7 @@ fn fill(e: Expr, env: &mut Environment, gen: &mut ExpressionGenerator, f: bool) 
 	    } else {
 		gen.generate(t, env).unwrap()
 	    })
-	}
+	},
+	Expr::Variable(s) => (0, Expr::Variable(s))
     }
 }

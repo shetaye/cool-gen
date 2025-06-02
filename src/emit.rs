@@ -284,6 +284,12 @@ impl<'a> Emittable<'a> for Expr {
                 e.exit_block();
             }
 
+	    Expr::Variable(name) => {
+                // Simply print the variable’s name
+                name.emit(e, c);
+            }
+
+
             Expr::Case(arms) => {
                 //
                 // case
