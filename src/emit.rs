@@ -1,9 +1,5 @@
-use std::fmt;
-use std::collections::HashMap;
-use la_arena::{Arena, Idx};
 use crate::symbol::*;
 use crate::tree::*;
-use crate::environment::Environment;
 
 /// A small trait that every AST node implements.
 /// We now pass in `&Program` (in addition to `&SymbolTable`) whenever we emit.

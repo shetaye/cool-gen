@@ -1,5 +1,3 @@
-use std::marker::PhantomData;
-use std::str::FromStr;
 use std::collections::HashSet;
 
 use crate::environment::Environment;
@@ -39,7 +37,7 @@ impl ShadowingMethodIDGenerator {
 }
 
 impl Generator<MethodSymbol, ()> for ShadowingMethodIDGenerator {
-    fn generate(&mut self, constraint: (), environment: &mut Environment) -> Option<MethodSymbol> {
+    fn generate(&mut self, _constraint: (), environment: &mut Environment) -> Option<MethodSymbol> {
 	let shadow = self.rng.random_bool(self.p_shadow);
 
 	let mut valid: Vec<MethodSymbol>;
@@ -129,7 +127,7 @@ impl ShadowingObjectIDGenerator {
 }
 
 impl Generator<ObjectSymbol, ()> for ShadowingObjectIDGenerator {
-    fn generate(&mut self, constraint: (), environment: &mut Environment) -> Option<ObjectSymbol> {
+    fn generate(&mut self, _constraint: (), environment: &mut Environment) -> Option<ObjectSymbol> {
 	let shadow = self.rng.random_bool(self.p_shadow);
 
 	let mut valid: Vec<ObjectSymbol>;
@@ -198,7 +196,7 @@ impl Generator<ClassSymbol, ()> for ClassNameGenerator {
 	let existing = HashSet::from_iter(
 	    environment.classes()
 		.iter()
-		.map(|(s, idx)| s.clone()));
+		.map(|(s, _)| s.clone()));
 
 	let valid: Vec<&ClassSymbol> = dictionary.difference(&existing).collect();
 	match valid.len() {
@@ -366,7 +364,7 @@ impl AssignGenerator {
 
 impl Generator<Expr, Type> for AssignGenerator {
     fn generate(&mut self, goal_type: Type, environment: &mut Environment) -> Option<Expr> {
-        let (n, t) = environment
+        let (n, _) = environment
                       .enumerate_bindings()
                       .into_iter()
                       .filter(|x| {x.1 == goal_type})
@@ -383,6 +381,7 @@ impl Generator<Expr, Type> for AssignGenerator {
 
 pub struct DispatchGenerator<T: Generator<Type, Type>> {
     rng: RNG,
+    #[allow(unused)]
     type_generator: T,
     p_self: f64,
     p_static: f64
@@ -526,13 +525,13 @@ impl Generator<Expr, Type> for ConstantGenerator {
 
             // If the goal is exactly Int, produce a random i32 literal
             Type::Concrete(sym) if sym == _environment.to_sym("Int").into() => {
-                let value = self.rng.gen::<u32>();
+                let value = self.rng.random::<u32>();
                 Some(Expr::Int(value))
             }
 
             // If the goal is exactly Bool, produce a random boolean literal
             Type::Concrete(sym) if sym == _environment.to_sym("Bool").into() => {
-                let value = self.rng.gen::<bool>();
+                let value = self.rng.random::<bool>();
                 Some(Expr::Bool(value))
             }
 
@@ -551,6 +550,7 @@ impl Generator<Expr, Type> for ConstantGenerator {
 }
 
 pub struct LoopGenerator {
+    #[allow(unused)]
     rng: RNG,
 }
 
@@ -632,6 +632,7 @@ impl Generator<Expr, Type> for BlockGenerator {
 }
 
 pub struct LetGenerator<N: Generator<ObjectSymbol, ()>, T: Generator<Type, Type>> {
+    #[allow(unused)]
     rng: RNG,
     name_generator: N,
     type_generator: T,
@@ -731,7 +732,7 @@ impl<N: Generator<ObjectSymbol, ()>> Generator<Expr, Type> for CaseGenerator<N> 
         //
         //    To pick the body type, we look up subtypes_of(goal_type, true). If empty,
         //    we use `goal_type` directly.
-        let mut all_goal_subs = environment.subtypes_of(goal_type, true);
+        let all_goal_subs = environment.subtypes_of(goal_type, true);
         let mut arms = Vec::with_capacity(num_arms);
 
         for arm_type in chosen_arm_types {
@@ -967,7 +968,7 @@ impl VariableGenerator {
 impl Generator<Expr, Type> for VariableGenerator {
     fn generate(&mut self, goal_type: Type, environment: &mut Environment) -> Option<Expr> {
         // Collect all bindings whose type == goal_type
-        let mut candidates: Vec<ObjectSymbol> = environment
+        let candidates: Vec<ObjectSymbol> = environment
             .enumerate_bindings()
             .into_iter()
             .filter_map(|(sym, ty)| if ty == goal_type { Some(sym) } else { None })

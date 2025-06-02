@@ -202,25 +202,25 @@ impl Mutator<Program, &mut SymbolTable> for ProgramMutator {
 	while !dfs_stack.is_empty() {
 	    let next_idx = dfs_stack.pop().unwrap();
 
-	    if !prog.get_class(next_idx).builtin {
-		// Generate attributes
-		let n_attributes: usize = self.rng.random_range(self.config.min_attributes..self.config.max_attributes);
-		for i in 0..n_attributes {
-		    let mut e = Environment::new(Some(next_idx), prog, st);
-		    let generation_attempt = self.attribute_generator.generate((), &mut e);
-		    if let Some(attr) = generation_attempt {
-			prog.get_class_mut(next_idx).attributes.push(attr);
-		    }
-		}
+        if !prog.get_class(next_idx).builtin {
+            // Generate attributes
+            let n_attributes: usize = self.rng.random_range(self.config.min_attributes..self.config.max_attributes);
+            for _ in 0..n_attributes {
+                let mut e = Environment::new(Some(next_idx), prog, st);
+                let generation_attempt = self.attribute_generator.generate((), &mut e);
+                if let Some(attr) = generation_attempt {
+                    prog.get_class_mut(next_idx).attributes.push(attr);
+                }
+            }
 
-		// Generate methods
-		let n_methods: usize = self.rng.random_range(self.config.min_methods..self.config.max_methods);
-		for _ in 0..n_methods {
-		    let generation_attempt = self.method_generator.generate((), &mut Environment::new(Some(next_idx), prog, st));
-		    if let Some(meth) = generation_attempt {
-			prog.get_class_mut(next_idx).methods.push(meth);
+		    // Generate methods
+		    let n_methods: usize = self.rng.random_range(self.config.min_methods..self.config.max_methods);
+		    for _ in 0..n_methods {
+		        let generation_attempt = self.method_generator.generate((), &mut Environment::new(Some(next_idx), prog, st));
+		        if let Some(meth) = generation_attempt {
+			        prog.get_class_mut(next_idx).methods.push(meth);
+		        }
 		    }
-		}
 	    }
 
 	    for c in prog.get_class(next_idx).children.iter() {
@@ -309,22 +309,22 @@ impl Mutator<Program, &mut SymbolTable> for ProgramMutator {
 		let mut env = Environment::new(Some(idx), prog, st);
 		let mut attributes: Vec<(ObjectSymbol, Expr)> = vec![];
 		for a in class.attributes.iter() {
-		    if let Some(b) = &a.body {
-			env.push_scope();
+            if a.body.is_some() {
+                env.push_scope();
 
-			let mut body = self.expression_generator.generate(a.type_, &mut env).unwrap();
-			let mut n_fill = 1;
-			let mut n_rounds = 0;
-			while n_fill > 0 && n_rounds < self.config.n_rounds {
-			    (n_fill, body) = fill(body, &mut env, &mut self.expression_generator, false);
-			    n_rounds += 1;
-			}
-			if n_fill > 0 {
-			    (_, body) = fill(body, &mut env, &mut self.expression_generator, true);
-			}
-			attributes.push((a.name, body));
+			    let mut body = self.expression_generator.generate(a.type_, &mut env).unwrap();
+			    let mut n_fill = 1;
+			    let mut n_rounds = 0;
+			    while n_fill > 0 && n_rounds < self.config.n_rounds {
+			        (n_fill, body) = fill(body, &mut env, &mut self.expression_generator, false);
+			        n_rounds += 1;
+			    }
+			    if n_fill > 0 {
+			        (_, body) = fill(body, &mut env, &mut self.expression_generator, true);
+			    }
+			    attributes.push((a.name, body));
 
-			env.pop_scope();
+			    env.pop_scope();
 		    }
 		}
 		(idx, attributes)

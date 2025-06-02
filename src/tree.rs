@@ -1,8 +1,5 @@
-use std::rc::Rc;
-use std::cell::RefCell;
 use la_arena::{Arena, Idx};
 use crate::symbol::*;
-use crate::environment::Environment;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Type {
@@ -116,30 +113,31 @@ pub struct Class {
 
 impl Class {
     pub fn new(name: ClassSymbol, builtin: bool) -> Self {
-	Class {
-	    name,
-	    builtin,
-	    inherits: None,
-	    children: Vec::new(),
-	    methods: Vec::new(),
-	    attributes: Vec::new()
-	}
+        Class {
+            name,
+            builtin,
+            inherits: None,
+            children: Vec::new(),
+            methods: Vec::new(),
+            attributes: Vec::new()
+        }
     }
 
+    #[allow(dead_code)]
     pub fn get_attr(&self, name: ObjectSymbol) -> Option<&Attribute> {
-	self.attributes.iter().find(|a| a.name == name)
+        self.attributes.iter().find(|a| a.name == name)
     }
 
     pub fn get_attr_mut(&mut self, name: ObjectSymbol) -> Option<&mut Attribute> {
-	self.attributes.iter_mut().find(|a| a.name == name)
+	    self.attributes.iter_mut().find(|a| a.name == name)
     }
 
     pub fn get_meth(&self, name: MethodSymbol) -> Option<&Method> {
-	self.methods.iter().find(|a| a.name == name)
+	    self.methods.iter().find(|a| a.name == name)
     }
 
     pub fn get_meth_mut(&mut self, name: MethodSymbol) -> Option<&mut Method> {
-	self.methods.iter_mut().find(|a| a.name == name)
+	    self.methods.iter_mut().find(|a| a.name == name)
     }
 }
 
@@ -150,69 +148,70 @@ pub struct Program {
 
 impl Program {
     pub fn new(st: &mut SymbolTable) -> Self {
-	let mut cl: Arena<Class> = Arena::new();
+        let mut cl: Arena<Class> = Arena::new();
 
 
-	// Create base program
-	let object_sym = st.insert_ref("Object").into();
-	let object = cl.alloc(Class::new(object_sym, true));
+	    // Create base program
+	    let object_sym = st.insert_ref("Object").into();
+	    let object = cl.alloc(Class::new(object_sym, true));
 
-	let mut p = Program {
-	    object,
-	    class_arena: cl,
-	};
+	    let mut p = Program {
+	        object,
+	        class_arena: cl,
+	    };
 
-	// Create default hierarchy
-	let io_sym = st.to_sym("IO");
-	p.add_class(st, Some(object_sym), Class::new(io_sym.into(), true));
+	    // Create default hierarchy
+	    let io_sym = st.to_sym("IO");
+	    p.add_class(st, Some(object_sym), Class::new(io_sym.into(), true));
 
-	let string_sym = st.to_sym("String");
-	p.add_class(st, Some(object_sym), Class::new(string_sym.into(), true));
+	    let string_sym = st.to_sym("String");
+	    p.add_class(st, Some(object_sym), Class::new(string_sym.into(), true));
 
-	let bool_sym = st.to_sym("Bool");
-	p.add_class(st, Some(object_sym), Class::new(bool_sym.into(), true));
+	    let bool_sym = st.to_sym("Bool");
+	    p.add_class(st, Some(object_sym), Class::new(bool_sym.into(), true));
 
-	let int_sym = st.to_sym("Int");
-	p.add_class(st, Some(object_sym), Class::new(int_sym.into(), true));
+	    let int_sym = st.to_sym("Int");
+	    p.add_class(st, Some(object_sym), Class::new(int_sym.into(), true));
 
-	p
+	    p
     }
 
     /// DFS to find class by name
     pub fn lookup_class(&self, name: ClassSymbol) -> Option<Idx<Class>> {
-	let mut st = vec![self.object];
-	while !st.is_empty() {
-	    let p = st.pop().unwrap();
-	    let c = &self.class_arena[p];
+	    let mut st = vec![self.object];
+	    while !st.is_empty() {
+	        let p = st.pop().unwrap();
+	        let c = &self.class_arena[p];
 
-	    if c.name == name {
-		return Some(p)
+	        if c.name == name {
+		        return Some(p)
+	        }
+	        
+	        st.extend_from_slice(&c.children);
 	    }
-	    
-	    st.extend_from_slice(&c.children);
-	}
-	None
+	    None
     }
 
     pub fn get_class(&self, class: Idx<Class>) -> &Class {
-	&self.class_arena[class]
+	    &self.class_arena[class]
     }
 
     pub fn get_class_mut(&mut self, class: Idx<Class>) -> &mut Class {
-	&mut self.class_arena[class]
+	    &mut self.class_arena[class]
     }
 
     pub fn add_class(&mut self, st: &mut SymbolTable, parent: Option<ClassSymbol>, c: Class) -> Idx<Class> {
-	let obj = st.lookup("Object").unwrap();
-	let true_parent = parent.unwrap_or(obj.into());
-	let true_parent_idx = self.lookup_class(true_parent).unwrap();
-	let new_class_idx = self.class_arena.alloc(c);
-	self.class_arena[new_class_idx].inherits = Some(true_parent_idx);
-	let parent_class = &mut self.class_arena[true_parent_idx];
-	parent_class.children.push(new_class_idx);
-	new_class_idx
+	    let obj = st.lookup("Object").unwrap();
+	    let true_parent = parent.unwrap_or(obj.into());
+	    let true_parent_idx = self.lookup_class(true_parent).unwrap();
+	    let new_class_idx = self.class_arena.alloc(c);
+	    self.class_arena[new_class_idx].inherits = Some(true_parent_idx);
+	    let parent_class = &mut self.class_arena[true_parent_idx];
+	    parent_class.children.push(new_class_idx);
+	    new_class_idx
     }
 
+    #[allow(dead_code)]
     pub fn debug_print_hierarchy(&self, st: &mut SymbolTable) {
         println!("⎯⎯⎯ Current Class Hierarchy ⎯⎯⎯");
         for (idx, class) in self.class_arena.iter() {

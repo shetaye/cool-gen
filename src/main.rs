@@ -5,12 +5,11 @@ mod environment;
 mod emit;
 mod mutator;
 
-use rand::prelude::*;
-
-use crate::symbol::SymbolTable;
-use crate::tree::Program;
-use crate::emit::Emit;
-use crate::mutator::{Mutator, ProgramMutator, ProgramMutationConfig};
+pub use crate::symbol::SymbolTable;
+pub use crate::tree::Program;
+pub use crate::mutator::{Mutator, ProgramMutator, ProgramMutationConfig};
+pub use crate::emit::Emit;
+pub use crate::environment::Environment;
 
 fn main() {
     let mut st = SymbolTable::new();
