@@ -1,7 +1,41 @@
 use std::collections::HashMap;
+use std::convert::From;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Symbol(usize);
+
+impl From<ClassSymbol> for Symbol {
+    fn from(item: ClassSymbol) -> Self { item.0 }
+}
+impl From<ObjectSymbol> for Symbol {
+    fn from(item: ObjectSymbol) -> Self { item.0 }
+}
+impl From<MethodSymbol> for Symbol {
+    fn from(item: MethodSymbol) -> Self { item.0 }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ClassSymbol(Symbol);
+
+impl From<Symbol> for ClassSymbol {
+    fn from(item: Symbol) -> Self { Self(item) }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ObjectSymbol(Symbol);
+
+impl From<Symbol> for ObjectSymbol {
+    fn from(item: Symbol) -> Self { Self(item) }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct MethodSymbol(Symbol);
+
+impl From<Symbol> for MethodSymbol {
+    fn from(item: Symbol) -> Self { Self(item) }
+}
+
+
 
 pub struct SymbolTable {
     symbols: Vec<String>,

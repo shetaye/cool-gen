@@ -1,25 +1,26 @@
 use std::rc::Rc;
 use std::cell::RefCell;
 use la_arena::{Arena, Idx};
-use crate::symbol::{Symbol, SymbolTable};
+use crate::symbol::*;
 use crate::environment::Environment;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Type {
     SelfType,
-    Concrete(Symbol)
+    Concrete(ClassSymbol)
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct Formal {
-    pub name: Symbol,
+    pub name: ObjectSymbol,
     pub type_: Type
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CaseArm {
-    pub name: Symbol,
-    pub type_: Type
+    pub name: ObjectSymbol,
+    pub type_: Type,
+    pub body: Box<Expr>
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -40,15 +41,16 @@ pub enum ComparisonOp {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Expr {
     String(String),
-    Int(i64),
+    Int(i32),
     Bool(bool),
     Assignment {
-        to: Symbol,
+        to: ObjectSymbol,
         val: Box<Expr>
     },
     Dispatch {
-        on: Box<Expr>,
+        on: Option<Box<Expr>>,
         at: Option<Type>,
+	name: MethodSymbol,
         formals: Vec<Expr>
     },
     If {
@@ -60,23 +62,16 @@ pub enum Expr {
         condition: Box<Expr>,
         body: Box<Expr>
     },
-    Block {
-        body: Vec<Expr>
-    },
+    Block(Vec<Expr>),
     Let {
-        binding: Symbol,
+        binding: ObjectSymbol,
         type_: Type,
+	initializer: Box<Expr>,
         body: Box<Expr>
     },
-    Case {
-        arms: Vec<Expr>
-    },
-    New {
-        type_: Type
-    },
-    Isvoid {
-        expression: Box<Expr>
-    },
+    Case(Vec<CaseArm>),
+    New(Type),
+    Isvoid(Box<Expr>),
     Arithmetic {
         op: ArithmeticOp,
         lhs: Box<Expr>,
@@ -93,20 +88,20 @@ pub enum Expr {
 }
 
 pub struct Method {
-    pub name: Symbol,
+    pub name: MethodSymbol,
     pub formals: Vec<Formal>,
     pub ret_type: Type,
     pub body: Expr
 }
 
 pub struct Attribute {
-    pub name: Symbol,
+    pub name: ObjectSymbol,
     pub type_: Type,
     pub body: Option<Expr>
 }
 
 pub struct Class {
-    pub name: Symbol,
+    pub name: ClassSymbol,
     pub builtin: bool,
     pub inherits: Option<Idx<Class>>,
     pub children: Vec<Idx<Class>>,
@@ -115,7 +110,7 @@ pub struct Class {
 }
 
 impl Class {
-    pub fn new(name: Symbol, builtin: bool) -> Self {
+    pub fn new(name: ClassSymbol, builtin: bool) -> Self {
 	Class {
 	    name,
 	    builtin,
@@ -125,56 +120,61 @@ impl Class {
 	    attributes: Vec::new()
 	}
     }
+
+    pub fn get_attr(&self, name: ObjectSymbol) -> Option<&Attribute> {
+	self.attributes.iter().find(|a| a.name == name)
+    }
+
+    pub fn get_attr_mut(&mut self, name: ObjectSymbol) -> Option<&mut Attribute> {
+	self.attributes.iter_mut().find(|a| a.name == name)
+    }
+
+    pub fn get_meth(&self, name: MethodSymbol) -> Option<&Method> {
+	self.methods.iter().find(|a| a.name == name)
+    }
+
+    pub fn get_meth_mut(&mut self, name: MethodSymbol) -> Option<&mut Method> {
+	self.methods.iter_mut().find(|a| a.name == name)
+    }
 }
 
 pub struct Program {
     pub object: Idx<Class>,
     pub class_arena: Arena<Class>,
-    pub symbol_table: SymbolTable
 }
 
 impl Program {
-    pub fn new() -> Self {
-	let mut st = SymbolTable::new();
+    pub fn new(st: &mut SymbolTable) -> Self {
 	let mut cl: Arena<Class> = Arena::new();
 
 
 	// Create base program
-	let object_sym = st.insert_ref("Object");
+	let object_sym = st.insert_ref("Object").into();
 	let object = cl.alloc(Class::new(object_sym, true));
 
 	let mut p = Program {
 	    object,
 	    class_arena: cl,
-	    symbol_table: st,
 	};
 
 	// Create default hierarchy
-	let io_sym = p.to_sym("IO");
-	p.add_class(Some(object_sym), Class::new(io_sym, true));
+	let io_sym = st.to_sym("IO");
+	p.add_class(st, Some(object_sym), Class::new(io_sym.into(), true));
 
-	let string_sym = p.to_sym("String");
-	p.add_class(Some(object_sym), Class::new(string_sym, true));
+	let string_sym = st.to_sym("String");
+	p.add_class(st, Some(object_sym), Class::new(string_sym.into(), true));
 
-	let bool_sym = p.to_sym("Bool");
-	p.add_class(Some(object_sym), Class::new(bool_sym, true));
+	let bool_sym = st.to_sym("Bool");
+	p.add_class(st, Some(object_sym), Class::new(bool_sym.into(), true));
 
-	let int_sym = p.to_sym("Int");
-	p.add_class(Some(object_sym), Class::new(int_sym, true));
+	let int_sym = st.to_sym("Int");
+	p.add_class(st, Some(object_sym), Class::new(int_sym.into(), true));
 
 	p
     }
 
-    pub fn to_sym(&mut self, name: &str) -> Symbol {
-	self.symbol_table.to_sym(name)
-    }
-
-    pub fn from_sym(&self, sym: Symbol) -> &str {
-	self.symbol_table.from_sym(sym)
-    }
-
     /// DFS to find class by name
-    pub fn lookup_class(&self, name: Symbol) -> Option<Idx<Class>> {
+    pub fn lookup_class(&self, name: ClassSymbol) -> Option<Idx<Class>> {
 	let mut st = vec![self.object];
 	while !st.is_empty() {
 	    let p = st.pop().unwrap();
@@ -197,9 +197,9 @@ impl Program {
 	&mut self.class_arena[class]
     }
 
-    pub fn add_class(&mut self, parent: Option<Symbol>, c: Class) -> Idx<Class> {
-	let obj = self.symbol_table.lookup("Object").unwrap();
-	let true_parent = parent.unwrap_or(obj);
+    pub fn add_class(&mut self, st: &mut SymbolTable, parent: Option<ClassSymbol>, c: Class) -> Idx<Class> {
+	let obj = st.lookup("Object").unwrap();
+	let true_parent = parent.unwrap_or(obj.into());
 	let true_parent_idx = self.lookup_class(true_parent).unwrap();
 	let new_class_idx = self.class_arena.alloc(c);
 	self.class_arena[new_class_idx].inherits = Some(true_parent_idx);
