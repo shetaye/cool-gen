@@ -6,3 +6,5 @@ edition = "2021"
 [dependencies]
 la-arena = "0.3.1"
 rand = "0.9.1"
+toml = "0.8.22"
+serde = { version = "1.0", features = ["derive"] }

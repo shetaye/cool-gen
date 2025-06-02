@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
-
 use la_arena::Idx;
+use serde::{Deserialize, Serialize};
 
 use crate::symbol::{ClassSymbol, MethodSymbol, ObjectSymbol, SymbolTable};
 use crate::tree::*;
@@ -16,29 +16,64 @@ pub trait Mutator<T, C> {
     fn mutate(&mut self, obj: &mut T, context: C);
 }
 
-#[derive(Debug,Copy,Clone)]
+// Because Serde doesn't have default values, we have
+// to jankily use default initalizer functions
+fn zero() -> usize {0}
+fn one() -> usize {1}
+fn two() -> usize {2}
+fn three() -> usize {3}
+fn four() -> usize {4}
+fn five() -> usize {5}
+fn zerof() -> f64 {0.0}
+fn point1f() -> f64 {0.1}
+fn true_p() -> bool {true}
+
+
+#[derive(Debug,Copy,Clone,Serialize,Deserialize)]
 pub struct ProgramMutationConfig {
+    #[serde(default = "true_p")] 
     harness: bool,
+    #[serde(default = "four")] 
     n_rounds: usize,
+    #[serde(default = "four")] 
     n_classes: usize,
+    #[serde(default = "one")] 
     min_children: usize,
+    #[serde(default = "two")] 
     max_children: usize,
+    #[serde(default = "zero")] 
     min_attributes: usize,
+    #[serde(default = "five")] 
     max_attributes: usize,
+    #[serde(default = "zero")] 
     min_methods: usize,
+    #[serde(default = "five")] 
     max_methods: usize,
+    #[serde(default = "zero")] 
     min_formals: usize,
+    #[serde(default = "three")] 
     max_formals: usize,
+    #[serde(default = "two")] 
     min_block: usize,
+    #[serde(default = "four")] 
     max_block: usize,
+    #[serde(default = "two")] 
     min_case: usize,
+    #[serde(default = "four")] 
     max_case: usize,
+    #[serde(default = "zerof")] 
     p_void: f64,
+    #[serde(default = "point1f")] 
     p_method_override: f64,
+    #[serde(default = "point1f")] 
     p_formal_shadow: f64,
+    #[serde(default = "point1f")] 
     p_dispatch_self: f64,
+    #[serde(default = "point1f")] 
     p_dispatch_static: f64,
+    #[serde(default = "point1f")] 
     p_let_shadow: f64,
+    #[serde(default = "point1f")] 
     p_case_shadow: f64
 }
 
@@ -96,30 +131,30 @@ impl ProgramMutationConfig {
 
 impl Default for ProgramMutationConfig {
     fn default() -> Self {
-	Self::new(
+        Self::new(
             true,
-	    4,
-	    4,
-	    1,
-	    2,
-	    0,
-	    5,
-	    0,
-	    5,
-	    0,
-	    3,
-	    2,
-	    4,
-	    2,
-	    4,
-	    0.0,
-	    0.1,
-	    0.1,
-		0.1,
-	    0.1,
-	    0.1,
-	    0.1
-	)
+            4,
+            4,
+            1,
+            2,
+            0,
+            5,
+            0,
+            5,
+            0,
+            3,
+            2,
+            4,
+            2,
+            4,
+            0.0,
+            0.1,
+            0.1,
+            0.1,
+            0.1,
+            0.1,
+            0.1
+        )
     }
 }
 

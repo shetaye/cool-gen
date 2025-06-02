@@ -4,7 +4,14 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+clap = { version = "4.5.39", features = ["derive"] }
 cool-gen = { path = "../generator" }
+toml = "0.8.22"
+iocraft = "0.7.9"
+subprocess = "0.2.9"
+tempfile = "3.20.0"
+anyhow = "1.0.98"
+similar = "2.7.0"
 
 [[bin]]
 name = "cool-gen-harness"
