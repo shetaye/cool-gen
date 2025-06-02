@@ -285,7 +285,7 @@ impl<N: Generator<MethodSymbol, ()>, T: Generator<Type, Type>> ShallowMethodGene
 	    max_formals,
 	    formal_generator: FormalsGenerator::new(
 		ShadowingObjectIDGenerator::new(p_shadow),
-		SubtypeGenerator::new()
+		SubtypeGenerator::new(false)
 	    )
 	}
     }
@@ -333,16 +333,17 @@ impl<N: Generator<MethodSymbol, ()>, T: Generator<Type, Type>> Generator<Method,
 }
 
 pub struct SubtypeGenerator {
-    rng: RNG
+    rng: RNG,
+    selftype: bool
 }
 
 impl SubtypeGenerator {
-    pub fn new() -> Self { Self { rng: rand::rng() } }
+    pub fn new(selftype: bool) -> Self { Self { selftype, rng: rand::rng() } }
 }
 
 impl Generator<Type, Type> for SubtypeGenerator {
     fn generate(&mut self, supertype: Type, environment: &mut Environment) -> Option<Type> {
-	let subtypes = environment.subtypes_of(supertype, true);
+	let subtypes = environment.subtypes_of(supertype, self.selftype);
 	match subtypes.len() {
 	    0 => None,
 	    l => Some(subtypes[self.rng.random_range(0..l)])
@@ -525,7 +526,7 @@ impl Generator<Expr, Type> for ConstantGenerator {
 
             // If the goal is exactly Int, produce a random i32 literal
             Type::Concrete(sym) if sym == _environment.to_sym("Int").into() => {
-                let value = self.rng.gen::<i32>();
+                let value = self.rng.gen::<u32>();
                 Some(Expr::Int(value))
             }
 
@@ -533,6 +534,14 @@ impl Generator<Expr, Type> for ConstantGenerator {
             Type::Concrete(sym) if sym == _environment.to_sym("Bool").into() => {
                 let value = self.rng.gen::<bool>();
                 Some(Expr::Bool(value))
+            }
+
+            // Void is trivially a while (false) loop (false) pool
+            Type::Void => {
+                Some(Expr::Loop{
+                    condition: Box::new(Expr::Bool(false)),
+                    body: Box::new(Expr::Bool(false))
+                })
             }
 
             // For SelfType or any other class type, emit `new <type>`
@@ -555,6 +564,8 @@ impl LoopGenerator {
 
 impl Generator<Expr, Type> for LoopGenerator {
     fn generate(&mut self, goal_type: Type, environment: &mut Environment) -> Option<Expr> {
+        if goal_type != Type::Void { return None; }
+        
         // 1) Build a “Bool” Type
         let bool_sym: ClassSymbol = environment.to_sym("Bool").into();
         let bool_type = Type::Concrete(bool_sym);
@@ -597,7 +608,10 @@ impl Generator<Expr, Type> for BlockGenerator {
 
         // Gather all concrete subtypes of Object so that earlier holes can be any of them.
         let object_sym: ClassSymbol = environment.to_sym("Object").into();
-        let all_subs = environment.subtypes_of(Type::Concrete(object_sym), true);
+        let mut all_subs = environment.subtypes_of(Type::Concrete(object_sym), true);
+
+        // Include void
+        all_subs.push(Type::Void);
 
         // If there are no subtypes of Object, we’ll just do a 1‐element block.
         if all_subs.is_empty() {
@@ -678,34 +692,62 @@ impl<N: Generator<ObjectSymbol, ()>> CaseGenerator<N> {
 
 impl<N: Generator<ObjectSymbol, ()>> Generator<Expr, Type> for CaseGenerator<N> {
     fn generate(&mut self, goal_type: Type, environment: &mut Environment) -> Option<Expr> {
-        // 1) Collect all concrete subtypes of `goal_type` (including `goal_type` itself).
-        let mut candidates = environment.subtypes_of(goal_type, true);
-        if candidates.is_empty() {
-            // If there are no subtypes to choose from, we can't build any arms.
+        // 1) Find all classes in the program by asking for subtypes of Object
+        let object_sym: ClassSymbol = environment.to_sym("Object").into();
+        let mut all_classes = environment.subtypes_of(Type::Concrete(object_sym), true);
+        if all_classes.is_empty() {
             return None;
         }
 
-        // 2) Decide how many arms to make
-        let mut num_arms = self.rng.random_range(self.min_arms..=self.max_arms);
-        if num_arms > candidates.len() {
-            num_arms = candidates.len();
+        // 2) Pick a random class to serve as the “on” expression’s type
+        all_classes.shuffle(&mut self.rng);
+        let on_type = all_classes[0];
+
+        // Build `on_expr` as a hole of that type
+        let on_expr = Expr::Hole(on_type);
+
+        // 3) Gather all concrete subtypes of that on_type
+        let mut arm_types = environment.subtypes_of(on_type, false);
+        if arm_types.is_empty() {
+            // If the chosen on_type had no subtypes (unlikely if it includes itself),
+            // skip generation.
+            return None;
         }
 
-        // 3) Randomly pick `num_arms` distinct types from `candidates`
-        candidates.shuffle(&mut self.rng);
-        let chosen_types: Vec<Type> = candidates.into_iter().take(num_arms).collect();
+        // 4) Choose how many arms to create (bounded by number of subtypes)
+        let mut num_arms = self.rng.random_range(self.min_arms..=self.max_arms);
+        if num_arms > arm_types.len() {
+            num_arms = arm_types.len();
+        }
 
-        // 4) For each chosen type, build a CaseArm:
-        //    - generate a fresh name
-        //    - assign that type
-        //    - body is a Hole of that type
+        // 5) Randomly pick `num_arms` distinct types from `arm_types`
+        arm_types.shuffle(&mut self.rng);
+        let chosen_arm_types: Vec<Type> = arm_types.into_iter().take(num_arms).collect();
+
+        // 6) For each chosen arm type Ti, build a CaseArm:
+        //      • name: fresh ObjectSymbol
+        //      • type_: Ti
+        //      • body: a Hole of some subtype of goal_type
+        //
+        //    To pick the body type, we look up subtypes_of(goal_type, true). If empty,
+        //    we use `goal_type` directly.
+        let mut all_goal_subs = environment.subtypes_of(goal_type, true);
         let mut arms = Vec::with_capacity(num_arms);
-        for arm_type in chosen_types {
-            // 4a) Generate a fresh binding name
+
+        for arm_type in chosen_arm_types {
+            // 6a) Fresh binding name
             let name: ObjectSymbol = self.name_generator.generate((), environment)?;
-            // 4b) Body is just a hole of `arm_type`
-            let body_hole = Expr::Hole(arm_type);
-            // 4c) Construct the CaseArm
+
+            // 6b) Pick a random subtype of goal_type (or goal_type itself if no subtypes)
+            let body_ty = if all_goal_subs.is_empty() {
+                goal_type
+            } else {
+                *all_goal_subs.choose(&mut self.rng).unwrap()
+            };
+
+            // 6c) Build the body hole
+            let body_hole = Expr::Hole(body_ty);
+
             arms.push(CaseArm {
                 name,
                 type_: arm_type,
@@ -713,10 +755,15 @@ impl<N: Generator<ObjectSymbol, ()>> Generator<Expr, Type> for CaseGenerator<N> 
             });
         }
 
-        // 5) Return the Case expression
-        Some(Expr::Case(arms))
+        // 7) Return the full Case node
+        Some(Expr::Case {
+            on: Box::new(on_expr),
+            branches: arms,
+        })
     }
 }
+
+
 
 pub struct ArithmeticGenerator {
     rng: RNG,
@@ -955,11 +1002,11 @@ impl ExpressionGenerator {
 	    rng: rand::rng(),
 	    generators: vec![
 		Box::new(AssignGenerator::new()),
-		Box::new(DispatchGenerator::new(SubtypeGenerator::new(), p_dispatch_self, p_dispatch_static)),
+		Box::new(DispatchGenerator::new(SubtypeGenerator::new(true), p_dispatch_self, p_dispatch_static)),
 		Box::new(IfGenerator::new()),
 		Box::new(LoopGenerator::new()),
 		Box::new(BlockGenerator::new(min_block, max_block)),
-		Box::new(LetGenerator::new(ShadowingObjectIDGenerator::new(p_let_shadow), SubtypeGenerator::new())),
+		Box::new(LetGenerator::new(ShadowingObjectIDGenerator::new(p_let_shadow), SubtypeGenerator::new(true))),
 		Box::new(CaseGenerator::new(ShadowingObjectIDGenerator::new(p_case_shadow), min_case, max_case)),
 		Box::new(ArithmeticGenerator::new()),
 		Box::new(ComplementGenerator::new()),

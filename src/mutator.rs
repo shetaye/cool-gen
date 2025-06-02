@@ -18,6 +18,7 @@ pub trait Mutator<T, C> {
 
 #[derive(Debug,Copy,Clone)]
 pub struct ProgramMutationConfig {
+    harness: bool,
     n_rounds: usize,
     n_classes: usize,
     min_children: usize,
@@ -43,6 +44,7 @@ pub struct ProgramMutationConfig {
 
 impl ProgramMutationConfig {
     fn new(
+        harness: bool,
 	n_rounds: usize,
 	n_classes: usize,
 	min_children: usize,
@@ -66,6 +68,7 @@ impl ProgramMutationConfig {
 	p_case_shadow: f64
     ) -> Self {
 	Self {
+            harness,
 	    n_rounds,
 	    n_classes,
 	    min_children,
@@ -94,8 +97,9 @@ impl ProgramMutationConfig {
 impl Default for ProgramMutationConfig {
     fn default() -> Self {
 	Self::new(
+            true,
 	    4,
-	    10,
+	    4,
 	    1,
 	    2,
 	    0,
@@ -141,12 +145,12 @@ impl ProgramMutator {
 	    class_name_generator: ClassNameGenerator::new(),
 	    attribute_generator: ShallowAttributeGenerator::new(
 		FreshObjectIDGenerator::new(),
-		SubtypeGenerator::new(),
+		SubtypeGenerator::new(true),
 		p_void
 	    ),
 	    method_generator: ShallowMethodGenerator::new(
 		ShadowingMethodIDGenerator::new(p_method_override),
-		SubtypeGenerator::new(),
+		SubtypeGenerator::new(true),
 		min_formals,
 		max_formals,
 		p_formal_shadow
@@ -164,6 +168,7 @@ impl ProgramMutator {
 	}
     }
 }
+
 
 impl Mutator<Program, &mut SymbolTable> for ProgramMutator {
     fn mutate(&mut self, prog: &mut Program, st: &mut SymbolTable) {
@@ -183,6 +188,9 @@ impl Mutator<Program, &mut SymbolTable> for ProgramMutator {
 		    let generation_attempt = self.class_name_generator.generate((), &mut Environment::new(None, prog, st));
 		    if let Some(name) = generation_attempt {
 			let child = prog.add_class(st, Some(parent_sym), Class::new(name, false));
+                        if name == parent_sym {
+                            panic!("Generated self-inheritence");
+                        }
 			q.push_back(child);
 		    }
 		}
@@ -220,6 +228,80 @@ impl Mutator<Program, &mut SymbolTable> for ProgramMutator {
 	    }
 	}
 
+        // Main should contain a single method, main(): Int
+        // if config.harness, main should contain a block that instantiates every class and invokes each of their methods. When generating formal arguments, use the fallback generator to generate constants. The last element of the block should be a single 0 to typecheck.
+        // if !config.harness, main should contain a single 0, to typecheck.
+        {
+            // (a) Ensure “Main” is fresh
+            let main_sym = st.to_sym("Main").into();
+            if prog.lookup_class(main_sym).is_some() {
+                panic!("Class “Main” already exists in the arena!");
+            }
+
+            // (b) Create new class Main under Object
+            let main_idx = prog.add_class(st, Some(obj_sym), Class::new(main_sym, false));
+
+            // (c) Prepare MethodSymbol and return‐type
+            let main_meth_sym = st.to_sym("main").into();
+            let int_sym = st.to_sym("Int").into();
+            let main_ret_type = Type::Concrete(int_sym);
+
+            // (d) Construct the body of Main::main
+            let main_body: Expr = if !self.config.harness {
+                // Simply “0”
+                Expr::Int(0)
+            } else {
+                // Harness = true → produce a Block that, for every non‐builtin class C,
+                // and for every method m ∈ C.methods, emit: (new C).m(), then a final 0.
+                //
+                // We’ll collect them in a Vec<Expr> and wrap in Expr::Block(...).
+
+                let mut harness_stmts: Vec<Expr> = Vec::new();
+
+                // Iterate all classes in the arena
+                for (_idx, class_def) in prog.class_arena.iter() {
+                    if class_def.builtin {
+                        continue;
+                    }
+                    let c_sym = class_def.name;
+                    let c_ty = Type::Concrete(c_sym);
+
+                    // For each method in this class
+                    for method in &class_def.methods {
+                        // Build: (new C).method( )
+                        let new_c_expr = Expr::New(c_ty);
+
+                        let mut formals: Vec<Expr> = Vec::new();
+                        for f in method.formals.iter() {
+                            formals.push(Expr::Hole(f.type_));
+                        }
+
+                        let call_expr = Expr::Dispatch {
+                            on:      Some(Box::new(new_c_expr.clone())),
+                            at:      None,
+                            name:    method.name,
+                            formals: formals
+                        };
+                        harness_stmts.push(call_expr);
+                    }
+                }
+
+                // Finally, push “0” so that the block’s overall type is Int:
+                harness_stmts.push(Expr::Int(0));
+
+                Expr::Block(harness_stmts)
+            };
+
+            // (e) Insert that single method into Main
+            let main_method = Method {
+                name:     main_meth_sym,
+                formals:  Vec::new(),           // no arguments
+                ret_type: main_ret_type,
+                body:     main_body,
+            };
+            prog.get_class_mut(main_idx).methods.push(main_method);
+        }
+
 	// Deep generation pass to fill all holes. Defer all actual mutation by collecting
 	let new_attr = prog.class_arena
 	    .iter()
@@ -249,41 +331,96 @@ impl Mutator<Program, &mut SymbolTable> for ProgramMutator {
 	    })
 	    .collect::<Vec<(Idx<Class>, Vec<(ObjectSymbol, Expr)>)>>();
 
-	let new_method = prog.class_arena
-	    .iter()
-	    .map(|(idx, class)| {
-		let mut env = Environment::new(Some(idx), prog, st);
-		let mut methods: Vec<(MethodSymbol, Expr)> = vec![];
-		for m in class.methods.iter() {
-		    env.push_scope();
+        let new_method = prog.class_arena
+            .iter()
+            .map(|(idx, class_def)| {
+                
+                let io_sym = st.to_sym("IO").into();
+                let out_string_sym = st.to_sym("out_string").into();
+                let out_int_sym = st.to_sym("out_int").into();
+                let string_sym: ClassSymbol = st.to_sym("String").into();
+                let int_sym: ClassSymbol = st.to_sym("Int").into();
+                let mut env = Environment::new(Some(idx), prog, st);
+                let mut methods_out: Vec<(MethodSymbol, Expr)> = Vec::new();
 
-		    // Put formals in scope
-		    for f in m.formals.iter() {
-			env.bind(&f.name, f.type_);
-		    }
+                for m in &class_def.methods {
+                    // (1) Push scope for the class, then push scope for the method’s formals
+                    env.push_scope();
+                    for f in &m.formals {
+                        env.bind(&f.name, f.type_);
+                    }
 
+                    // (2) Now build the method’s “raw body” via hole‐filling
+                    env.push_scope();
+                    let mut raw_body = self.expression_generator
+                        .generate(m.ret_type, &mut env)
+                        .unwrap();
+                    let mut n_fill = 1;
+                    let mut n_rounds = 0;
+                    while n_fill > 0 && n_rounds < self.config.n_rounds {
+                        let (nf, filled) = fill(raw_body, &mut env, &mut self.expression_generator, false);
+                        n_fill = nf;
+                        raw_body = filled;
+                        n_rounds += 1;
+                    }
+                    if n_fill > 0 {
+                        let (_nf, final_body) = fill(raw_body, &mut env, &mut self.expression_generator, true);
+                        raw_body = final_body;
+                    }
+                    env.pop_scope(); // pop method’s formals
+                    env.pop_scope(); // pop class scope
 
-		    // Body scope
-		    env.push_scope();
-		    let mut body = self.expression_generator.generate(m.ret_type, &mut env).unwrap();
-		    let mut n_fill = 1;
-		    let mut n_rounds = 0;
-		    while n_fill > 0 && n_rounds < self.config.n_rounds {
-			(n_fill, body) = fill(body, &mut env, &mut self.expression_generator, false);
-			n_rounds += 1;
-		    }
-		    if n_fill > 0 {
-			(_, body) = fill(body, &mut env, &mut self.expression_generator, true);
-		    }
-		    methods.push((m.name, body));
-		    env.pop_scope();
-		    
+                    let final_body = if self.config.harness {
+                        let class_def = prog.get_class(idx);
 
-		    env.pop_scope();
-		}
-		(idx, methods)
-	    })
-	    .collect::<Vec<(Idx<Class>, Vec<(MethodSymbol, Expr)>)>>();
+                        // Build one Dispatch per attribute that is String or Int
+                        let mut prefix_stmts: Vec<Expr> = Vec::new();
+
+                        for attribute in &class_def.attributes {
+                            let attr_name = attribute.name;
+                            match attribute.type_ {
+                                Type::Concrete(tclass) if tclass == string_sym => {
+                                    // ( new IO ).out_string( x )
+                                    let new_io = Expr::New(Type::Concrete(io_sym));
+                                    let call = Expr::Dispatch {
+                                        on:      Some(Box::new(new_io)),
+                                        at:      None,
+                                        name:    out_string_sym,
+                                        formals: vec![Expr::Variable(attr_name)],
+                                    };
+                                    prefix_stmts.push(call);
+                                }
+                                Type::Concrete(tclass) if tclass == int_sym => {
+                                    // ( new IO ).out_int( x )
+                                    let new_io = Expr::New(Type::Concrete(io_sym));
+                                    let call = Expr::Dispatch {
+                                        on:      Some(Box::new(new_io)),
+                                        at:      None,
+                                        name:    out_int_sym,
+                                        formals: vec![Expr::Variable(attr_name)],
+                                    };
+                                    prefix_stmts.push(call);
+                                }
+                                _ => {
+                                    // ignore attributes of other types
+                                }
+                            }
+                        }
+
+                        // Finally, append the original raw_body as the last element:
+                        prefix_stmts.push(raw_body);
+                        Expr::Block(prefix_stmts)
+                    } else {
+                        // No harness: just the raw body
+                        raw_body
+                    };
+
+                    methods_out.push((m.name, final_body));
+                }
+
+                (idx, methods_out)
+            })
+            .collect::<Vec<(Idx<Class>, Vec<(MethodSymbol, Expr)>)>>();
 
 	for (idx, attrs) in new_attr {
 	    let class = prog.get_class_mut(idx);
@@ -386,8 +523,9 @@ fn fill(e: Expr, env: &mut Environment, gen: &mut ExpressionGenerator, f: bool) 
             })
         },
 
-        Expr::Case(branches) => {
+        Expr::Case{on, branches} => {
             let mut total = 0;
+            let (n_on, new_on) = fill(*on, env, gen, f);
             let mut new_branches = Vec::with_capacity(branches.len());
             for br in branches {
 		env.push_scope();
@@ -401,7 +539,7 @@ fn fill(e: Expr, env: &mut Environment, gen: &mut ExpressionGenerator, f: bool) 
 		    body: Box::new(new_br)
 		});
             }
-            (total, Expr::Case(new_branches))
+            (n_on + total, Expr::Case{on: Box::new(new_on), branches: new_branches})
         },
 
         Expr::New(t) => {

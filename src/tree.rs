@@ -7,6 +7,7 @@ use crate::environment::Environment;
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Type {
     SelfType,
+    Void,
     Concrete(ClassSymbol)
 }
 
@@ -41,7 +42,7 @@ pub enum ComparisonOp {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Expr {
     String(String),
-    Int(i32),
+    Int(u32),
     Bool(bool),
     Assignment {
         to: ObjectSymbol,
@@ -69,7 +70,10 @@ pub enum Expr {
 	initializer: Box<Expr>,
         body: Box<Expr>
     },
-    Case(Vec<CaseArm>),
+    Case {
+        on: Box<Expr>,
+        branches: Vec<CaseArm>
+    },
     New(Type),
     Isvoid(Box<Expr>),
     Arithmetic {
@@ -207,6 +211,20 @@ impl Program {
 	let parent_class = &mut self.class_arena[true_parent_idx];
 	parent_class.children.push(new_class_idx);
 	new_class_idx
+    }
+
+    pub fn debug_print_hierarchy(&self, st: &mut SymbolTable) {
+        println!("⎯⎯⎯ Current Class Hierarchy ⎯⎯⎯");
+        for (idx, class) in self.class_arena.iter() {
+            println!(
+                "  [{:?}] name={:?}   inherits→ [{:?}]   children→{:?}",
+                idx,
+                st.from_sym(class.name.into()),
+                class.inherits,
+                class.children,
+            );
+        }
+        println!("⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯");
     }
 }
 

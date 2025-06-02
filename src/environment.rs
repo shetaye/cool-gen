@@ -194,6 +194,7 @@ impl<'a> Environment<'a> {
 
     pub fn materialize_type(&self, t: Type) -> Option<Idx<Class>> {
 	match t {
+            Type::Void => None,
 	    Type::Concrete(t) => self.prog.lookup_class(t),
 	    Type::SelfType => self.current_class
 	}
@@ -215,27 +216,30 @@ impl<'a> Environment<'a> {
     }
 
     pub fn subtypes_of(&self, t: Type, selftype: bool) -> Vec<Type> {
-	if let Some(materialized_supertype) = self.materialize_type(t) {
-	    let mut subtypes = vec![];
-	    let mut dfs_stack = vec![materialized_supertype];
-	    while !dfs_stack.is_empty() {
-		let next_idx = dfs_stack.pop().unwrap();
-		let next_class = self.prog.get_class(next_idx);
+        match t {
+            Type::Concrete(supertype) => {
+                let materialized_supertype = self.prog.lookup_class(supertype).unwrap();
+                let mut subtypes = vec![];
+                let mut dfs_stack = vec![materialized_supertype];
+                while !dfs_stack.is_empty() {
+                    let next_idx = dfs_stack.pop().unwrap();
+                    let next_class = self.prog.get_class(next_idx);
 
-		subtypes.push(Type::Concrete(next_class.name));
+                    subtypes.push(Type::Concrete(next_class.name));
 
-		// SELF_TYPE
-		if selftype && Some(next_idx) == self.current_class {
-		    subtypes.push(Type::SelfType);
-		}
-		
-		for c in next_class.children.iter() {
-		    dfs_stack.push(*c);
-		}
-	    }
-	    subtypes
-	} else {
-	    vec![]
-	}
+                    // SELF_TYPE
+                    if selftype && Some(next_idx) == self.current_class {
+                        subtypes.push(Type::SelfType);
+                    }
+
+                    for c in next_class.children.iter() {
+                        dfs_stack.push(*c);
+                    }
+                }
+                subtypes
+            },
+            Type::SelfType => if selftype { vec![t] } else { vec![] },
+            Type::Void => vec![t]
+        }
     }
 }

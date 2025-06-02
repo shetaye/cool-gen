@@ -1,491 +1,674 @@
-use la_arena::Arena;
-
-use crate::tree::*;
+use std::fmt;
+use std::collections::HashMap;
+use la_arena::{Arena, Idx};
 use crate::symbol::*;
+use crate::tree::*;
 use crate::environment::Environment;
 
-pub struct Emitter {
-    indent: usize,
-    output: String
+/// A small trait that every AST node implements.
+/// We now pass in `&Program` (in addition to `&SymbolTable`) whenever we emit.
+/// That extra `&Program` is only needed when emitting a `Class`, so that
+/// we can look up a class’s parent in the arena.
+pub trait Emit {
+    fn emit(&self, st: &SymbolTable, prog: &Program) -> String;
 }
 
-impl Emitter {
-    pub fn new() -> Self {
-	Self {
-	    indent: 0,
-	    output: String::new()
-	}
-    }
+////////////////////////////////////////////////////////////////////////////////
+// 1) Helpers: emit for Type, ArithmeticOp, ComparisonOp, Formal, CaseArm
+//    (none of these actually need to inspect `prog`, so they simply ignore it)
+////////////////////////////////////////////////////////////////////////////////
 
-    pub fn emit(self) -> String {
-	self.output
-    }
-
-    fn emit_inline(&mut self, s: &str) {
-	self.output.push_str(s);
-    }
-
-    fn enter_line(&mut self) {
-	for _ in 0..self.indent {
-	    self.output.push_str("  ");
-	}
-    }
-
-    fn exit_line(&mut self) {
-	self.output.push('\n');
-    }
-
-    fn enter_block(&mut self) {
-	self.indent += 1;
-	//self.output.push('\n');
-    }
-
-    fn exit_block(&mut self) {
-	self.indent -= 1
-    }
-}
-
-pub trait Emittable<'a> {
-    type Context;
-    
-    fn emit(&self, e: &mut Emitter, c: Self::Context);
-}
-
-impl<'a> Emittable<'a> for ObjectSymbol {
-    type Context = &'a SymbolTable;
-
-    fn emit(&self, e: &mut Emitter, c: &'a SymbolTable) {
-	e.emit_inline(c.from_sym(Symbol::from(*self)))
-    }
-}
-
-impl<'a> Emittable<'a> for MethodSymbol {
-    type Context = &'a SymbolTable;
-
-    fn emit(&self, e: &mut Emitter, c: &'a SymbolTable) {
-	e.emit_inline(c.from_sym(Symbol::from(*self)))
-    }
-}
-
-impl<'a> Emittable<'a> for ClassSymbol {
-    type Context = &'a SymbolTable;
-
-    fn emit(&self, e: &mut Emitter, c: &'a SymbolTable) {
-	e.emit_inline(c.from_sym(Symbol::from(*self)))
-    }
-}
-
-impl<'a> Emittable<'a> for CaseArm {
-    type Context = &'a SymbolTable;
-
-    fn emit(&self, e: &mut Emitter, c: &'a SymbolTable) {
-        //   name : Type => body ;
-        self.name.emit(e, c);
-        e.emit_inline(" : ");
-        self.type_.emit(e, c);
-        e.emit_inline(" => ");
-        self.body.emit(e, c);
-        e.emit_inline(";");
-    }
-}
-
-impl<'a> Emittable<'a> for Expr {
-    type Context = &'a SymbolTable;
-
-    fn emit(&self, e: &mut Emitter, c: &'a SymbolTable) {
+impl Emit for Type {
+    fn emit(&self, st: &SymbolTable, _prog: &Program) -> String {
         match self {
+            Type::Void => "[void]".into(),
+            Type::SelfType => "SELF_TYPE".into(),
+            Type::Concrete(class_sym) => st.from_sym((*class_sym).into()).to_string(),
+        }
+    }
+}
+
+impl Emit for ArithmeticOp {
+    fn emit(&self, _st: &SymbolTable, _prog: &Program) -> String {
+        match self {
+            ArithmeticOp::Plus     => "+".into(),
+            ArithmeticOp::Minus    => "-".into(),
+            ArithmeticOp::Multiply => "*".into(),
+            ArithmeticOp::Divide   => "/".into(),
+        }
+    }
+}
+
+impl Emit for ComparisonOp {
+    fn emit(&self, _st: &SymbolTable, _prog: &Program) -> String {
+        match self {
+            ComparisonOp::LessThan       => "<".into(),
+            ComparisonOp::LessThanEqual  => "<=".into(),
+            ComparisonOp::Equal          => "=".into(),
+        }
+    }
+}
+
+impl Emit for Formal {
+    fn emit(&self, st: &SymbolTable, _prog: &Program) -> String {
+        let name = st.from_sym(self.name.into());
+        let ty   = self.type_.emit(st, _prog);
+        format!("{}: {}", name, ty)
+    }
+}
+
+impl Emit for CaseArm {
+    fn emit(&self, st: &SymbolTable, _prog: &Program) -> String {
+        // e.g.  x: Type => body
+        let var_name = st.from_sym(self.name.into());
+        let ty       = self.type_.emit(st, _prog);
+        let body_str = self.body.emit(st, _prog);
+        format!("{}: {} => {}", var_name, ty, body_str)
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// 2) Emit for expressions (Expr), fully parenthesized + indented.
+//    Expr never needs to know about `prog`—only about `st`—so we ignore `prog`.
+////////////////////////////////////////////////////////////////////////////////
+
+impl Expr {
+    /// Internal helper: emit with a given indent level (0 = no indent).
+    /// Each indent level = four spaces.
+    fn emit_with_indent(&self, st: &SymbolTable, _prog: &Program, indent: usize) -> String {
+        // Helper to produce `indent` × 4 spaces
+        fn indent_str(level: usize) -> String {
+            "    ".repeat(level)
+        }
+
+        let cur_indent   = indent_str(indent);
+        let child_indent = indent_str(indent + 1);
+
+        match self {
+            Expr::String(s) => {
+                // (
+                //     "hello"
+                // )
+                let escaped = s.replace('"', "\\\"");
+                format!(
+                    "{}(\n{}\"{}\"\n{})",
+                    cur_indent,
+                    child_indent,
+                    escaped,
+                    cur_indent
+                )
+            }
+
             Expr::Int(i) => {
-                e.emit_inline(i.to_string().as_str());
+                // (
+                //     42
+                // )
+                format!(
+                    "{}(\n{}{}\n{})",
+                    cur_indent,
+                    child_indent,
+                    i,
+                    cur_indent
+                )
             }
 
             Expr::Bool(b) => {
-                e.emit_inline(if *b { "true" } else { "false" });
+                let bool_str = if *b { "true" } else { "false" };
+                format!(
+                    "{}(\n{}{}\n{})",
+                    cur_indent,
+                    child_indent,
+                    bool_str,
+                    cur_indent
+                )
             }
 
-            Expr::String(s) => {
-                e.emit_inline("(\"");
-                e.emit_inline(s);
-                e.emit_inline("\")");
+            Expr::Variable(obj_sym) => {
+                let var_name = st.from_sym((*obj_sym).into());
+                format!(
+                    "{}(\n{}{}\n{})",
+                    cur_indent,
+                    child_indent,
+                    var_name,
+                    cur_indent
+                )
+            }
+
+            Expr::Hole(ty) => {
+                let ty_str = ty.emit(st, _prog);
+                format!(
+                    "{}(\n{}_<{}>_\n{})",
+                    cur_indent,
+                    child_indent,
+                    ty_str,
+                    cur_indent
+                )
             }
 
             Expr::Assignment { to, val } => {
-                // x <- y
-                to.emit(e, c);
-                e.emit_inline(" <- ");
-                val.emit(e, c);
+                // (
+                //     x <-
+                //     ( <val> )
+                // )
+                let var_name = st.from_sym((*to).into());
+                let val_blk  = val.emit_with_indent(st, _prog, indent + 1);
+                format!(
+                    "{}(\n{}{} <-\n{}\n{})",
+                    cur_indent,
+                    child_indent,
+                    var_name,
+                    val_blk,
+                    cur_indent
+                )
             }
-
             Expr::Dispatch { on, at, name, formals } => {
-                //
-                // Format:
-                //   [ (on_expr) ] [@StaticType].method(
-                //     arg1,
-                //     arg2,
-                //     ...
-                //   )
-                //
+                /*
+                We want:
 
-                // 1) Receiver, if any
-                if let Some(on_expr) = on {
-                    e.emit_inline("(");
-                    on_expr.emit(e, c);
-                    e.emit_inline(")");
+                1) No target, no @Type:
+                <indent>method(
+
+                2) Has target, no @Type:
+                <indent>(
+                <on-expr>
+            )
+                <indent>.method(
+
+                3) Has target and @Type:
+                <indent>(
+                <on-expr>
+            )
+                <indent>@Type.method(
+
+                4) (Optional) No target but @Type → treat as “self”:
+                <indent>(
+                self
+            )
+                <indent>@Type.method(
+                 */
+
+                // 1) “on” side: if Some(expr_on), emit that; if None but at=Some(_), treat as “self”; else skip.
+                let on_block = if let Some(expr_on) = on {
+                    // We have a real “on” expression.
+                    expr_on.emit_with_indent(st, _prog, indent + 1)
+                } else if at.is_some() {
+                    // No explicit “on”, but we do have @Type.  So we dispatch on “self@Type.”
+                    // Wrap “self” in a one‐line block.
+                    format!(
+                        "{}(\n{}self\n{})",
+                        child_indent,
+                        indent_str(indent + 2),
+                        child_indent,
+                    )
+                } else {
+                    // No on, no @Type → direct dispatch on self without even printing a “( self )” block.
+                    String::new()
+                };
+
+                // 2) Decide prefix for static‐type (if any)
+                //    If at = Some(ty), we will emit “@Type.” before the method name.
+                let at_prefix = if let Some(static_ty) = at {
+                    format!("@{}", static_ty.emit(st, _prog))
+                } else {
+                    "".to_string()
+                };
+
+                // 3) Compute each argument’s block
+                let mut args_blocks = Vec::new();
+                for arg in formals {
+                    args_blocks.push(arg.emit_with_indent(st, _prog, indent + 1));
                 }
 
-                // 2) Static dispatch, if any
-                if let Some(at_type) = at {
-                    e.emit_inline("@");
-                    at_type.emit(e, c);
+                // 4) Now assemble the entire Dispatch
+                let mut sb = String::new();
+                sb.push_str(&format!("{}(\n", cur_indent));
+
+                // If we actually printed an on_block (cases 2 & 3, or case 4), insert it
+                if !on_block.is_empty() {
+                    sb.push_str(&on_block);
+                    sb.push('\n');
                 }
 
-                // 3) Dot + method name (only if we saw on or at)
-                if on.is_some() || at.is_some() {
-                    e.emit_inline(".");
-                }
-                name.emit(e, c);
-                e.emit_inline("(");
-
-                // 4) Arguments: one per line, indented
-                if !formals.is_empty() {
-                    e.exit_line();
-                    e.enter_block();
-                    for (i, f) in formals.iter().enumerate() {
-                        e.enter_line();
-                        f.emit(e, c);
-                        if i < formals.len() - 1 {
-                            e.emit_inline(",");
-                        }
-                        e.exit_line();
+                // 5) Emit the method‐line itself
+                let method_name = st.from_sym((*name).into());
+                if at_prefix.is_empty() {
+                    // Cases 1 or 2: no static dispatch
+                    if on.is_some() {
+                        // Case 2: we do have a target, so prefix with “<indent> .method(”
+                        sb.push_str(&format!("{} .{}(\n", child_indent, method_name));
+                    } else {
+                        // Case 1: no target, no @Type → just “<indent>method(”
+                        sb.push_str(&format!("{}{}\n", child_indent, method_name));
+                        sb.push_str(&format!("{}(\n", child_indent));
                     }
-                    e.exit_block();
-
-                    // closing “)” at the same indent as “method(”
-                    e.enter_line();
+                } else {
+                    // Case 3 (or 4 if on was None but at is Some): we have @Type
+                    // → “<indent>@Type.method(”
+                    sb.push_str(&format!("{}{}.{}(\n", child_indent, at_prefix, method_name));
                 }
-                e.emit_inline(")");
+
+                // 6) Emit arguments, comma‐separated
+                for (i, arg_blk) in args_blocks.into_iter().enumerate() {
+                    sb.push_str(&arg_blk);
+                    if i + 1 < formals.len() {
+                        sb.push_str(",\n");
+                    } else {
+                        sb.push('\n');
+                    }
+                }
+
+                // 7) Close “method( … )”
+                sb.push_str(&format!("{}  )\n", child_indent));
+                // 8) Close the entire dispatch
+                sb.push_str(&format!("{})", cur_indent));
+                sb
             }
+
 
             Expr::If { condition, then, else_ } => {
-                //
-                // if ( condition )
-                //   then_branch
-                // else
-                //   else_branch
-                // fi
-                //
+                /*
+                (
+                    if
+                        ( <cond> )
+                    then
+                        ( <then> )
+                    else
+                        ( <else> )
+                    fi
+                )
+                */
+                let cond_blk = condition.emit_with_indent(st, _prog, indent + 1);
+                let then_blk = then.emit_with_indent(st, _prog, indent + 1);
+                let else_blk = else_.emit_with_indent(st, _prog, indent + 1);
 
-                // “if (cond)”
-                e.emit_inline("if (");
-                condition.emit(e, c);
-                e.emit_inline(")");
-                e.exit_line();
-
-                // then‐branch
-                e.enter_block();
-                e.enter_line();
-                then.emit(e, c);
-                e.exit_line();
-                e.exit_block();
-
-                // “else”
-                e.enter_line();
-                e.emit_inline("else");
-                e.exit_line();
-
-                // else‐branch
-                e.enter_block();
-                e.enter_line();
-                else_.emit(e, c);
-                e.exit_line();
-                e.exit_block();
-
-                // “fi”
-                e.enter_line();
-                e.emit_inline("fi");
+                format!(
+                    "{}(\n\
+                     {}if\n\
+                     {}\n\
+                     {}then\n\
+                     {}\n\
+                     {}else\n\
+                     {}\n\
+                     {}fi\n\
+                     {})",
+                    cur_indent,
+                    child_indent,
+                    cond_blk,
+                    child_indent,
+                    then_blk,
+                    child_indent,
+                    else_blk,
+                    child_indent,
+                    cur_indent
+                )
             }
 
             Expr::Loop { condition, body } => {
-                //
-                // while ( condition )
-                //   body
-                // pool
-                //
+                /*
+                (
+                    while
+                        ( <cond> )
+                    loop
+                        ( <body> )
+                    pool
+                )
+                */
+                let cond_blk = condition.emit_with_indent(st, _prog, indent + 1);
+                let body_blk = body.emit_with_indent(st, _prog, indent + 1);
 
-                // “while (cond)”
-                e.emit_inline("while (");
-                condition.emit(e, c);
-                e.emit_inline(")");
-                e.exit_line();
-
-                // body
-                e.enter_block();
-                e.enter_line();
-                body.emit(e, c);
-                e.exit_line();
-                e.exit_block();
-
-                // “pool”
-                e.enter_line();
-                e.emit_inline("pool");
+                format!(
+                    "{}(\n\
+                     {}while\n\
+                     {}\n\
+                     {}loop\n\
+                     {}\n\
+                     {}pool\n\
+                     {})",
+                    cur_indent,
+                    child_indent,
+                    cond_blk,
+                    child_indent,
+                    body_blk,
+                    child_indent,
+                    cur_indent
+                )
             }
 
             Expr::Block(exprs) => {
-                //
-                // block: print each sub‐expr on its own line
-                //
-                
-		// Opening brace
-		e.emit_inline("{");
-		e.exit_line();
+                /*
+                (
+                    {
+                        ( <e1> );
+                        ( <e2> );
+                        …
+                    }
+                )
+                */
+                let mut sb = String::new();
+                sb.push_str(&format!("{}(\n", cur_indent));
+                sb.push_str(&format!("{}{{\n", child_indent));
 
-		// Increase indent for inner expressions
-		e.enter_block();
-		for expr in exprs {
-		    e.enter_line();
-		    expr.emit(e, c);
-		    e.emit_inline(";");
-		    e.exit_line();
-		}
-		e.exit_block();
+                for subexpr in exprs.iter() {
+                    let sub_blk = subexpr.emit_with_indent(st, _prog, indent + 1);
+                    sb.push_str(&sub_blk);
+                    sb.push_str(";\n");
+                }
 
-		// Closing brace
-		e.enter_line();
-		e.emit_inline("}");
+                sb.push_str(&format!("{}  }}\n", child_indent));
+                sb.push_str(&format!("{})", cur_indent));
+                sb
             }
 
             Expr::Let { binding, type_, initializer, body } => {
-                //
-                // let x : T <- ( initializer )
-                //   body
-                //
-                e.emit_inline("(let ");
-                binding.emit(e, c);
-                e.emit_inline(": ");
-                type_.emit(e, c);
+                /*
+                (
+                    let x: T <-
+                        ( <init> )
+                    in
+                        ( <body> )
+                )
+                */
+                let var_name = st.from_sym((*binding).into());
+                let ty_str   = type_.emit(st, _prog);
+                let init_blk = initializer.emit_with_indent(st, _prog, indent + 1);
+                let body_blk = body.emit_with_indent(st, _prog, indent + 1);
 
-                // initializer in its own “( … )” block
-                e.emit_inline(" <- (");
-                e.exit_line();
-                e.enter_block();
-                e.enter_line();
-                initializer.emit(e, c);
-                e.exit_line();
-                e.exit_block();
-                e.enter_line();
-                e.emit_inline(") in");
-
-                // body on next line
-                e.exit_line();
-                e.enter_block();
-                e.enter_line();
-                body.emit(e, c);
-		e.emit_inline(")");
-                e.exit_line();
-                e.exit_block();
+                format!(
+                    "{}(\n\
+                     {}let {}: {} <-\n\
+                     {}\n\
+                     {}in\n\
+                     {}\n\
+                     {})",
+                    cur_indent,
+                    child_indent,
+                    var_name,
+                    ty_str,
+                    init_blk,
+                    child_indent,
+                    body_blk,
+                    cur_indent
+                )
             }
 
-	    Expr::Variable(name) => {
-                // Simply print the variable’s name
-                name.emit(e, c);
-            }
+            Expr::Case { on, branches } => {
+                /*
+                (
+                    case
+                        ( <on_expr> )
+                    of
+                        <arm1>;
+                        <arm2>;
+                        …
+                    end
+                )
+                */
+                let on_blk = on.emit_with_indent(st, _prog, indent + 1);
 
+                let mut sb = String::new();
+                sb.push_str(&format!("{}(\n", cur_indent));
+                sb.push_str(&format!("{}case\n", child_indent));
+                sb.push_str(&format!("{}\n", on_blk));
+                sb.push_str(&format!("{}of\n", child_indent));
 
-            Expr::Case(arms) => {
-                //
-                // case
-                //   name1 : Type1 => expr1;
-                //   name2 : Type2 => expr2;
-                // esac
-                //
-                e.emit_inline("case");
-                e.exit_line();
-
-                e.enter_block();
-                for arm in arms {
-                    e.enter_line();
-                    arm.emit(e, c);
-                    e.exit_line();
+                for arm in branches.iter() {
+                    // Each CaseArm is a single line (e.g. "x: T => <body>"), so indent by child_indent
+                    sb.push_str(&format!("{}{}", child_indent, arm.emit(st, _prog)));
+                    sb.push_str(";\n");
                 }
-                e.exit_block();
 
-                e.enter_line();
-                e.emit_inline("esac");
+                sb.push_str(&format!("{}esac\n", child_indent));
+                sb.push_str(&format!("{})", cur_indent));
+                sb
             }
 
-            Expr::New(t) => {
-                e.emit_inline("(new ");
-                t.emit(e, c);
-                e.emit_inline(")");
+            Expr::New(ty) => {
+                /*
+                (
+                    new T
+                )
+                */
+                let ty_str = ty.emit(st, _prog);
+                format!(
+                    "{}(\n{}new {}\n{})",
+                    cur_indent,
+                    child_indent,
+                    ty_str,
+                    cur_indent
+                )
             }
 
-            Expr::Isvoid(inner) => {
-                e.emit_inline("isvoid ");
-                inner.emit(e, c);
+            Expr::Isvoid(x) => {
+                /*
+                (
+                    isvoid
+                    ( <x> )
+                )
+                */
+                let x_blk = x.emit_with_indent(st, _prog, indent + 1);
+                format!(
+                    "{}(\n\
+                     {}isvoid\n\
+                     {}\n\
+                     {})",
+                    cur_indent,
+                    child_indent,
+                    x_blk,
+                    cur_indent
+                )
             }
 
             Expr::Arithmetic { op, lhs, rhs } => {
-                lhs.emit(e, c);
-                match op {
-                    ArithmeticOp::Plus     => e.emit_inline(" + "),
-                    ArithmeticOp::Minus    => e.emit_inline(" - "),
-                    ArithmeticOp::Multiply => e.emit_inline(" * "),
-                    ArithmeticOp::Divide   => e.emit_inline(" / "),
-                }
-                rhs.emit(e, c);
+                /*
+                (
+                    ( <lhs> )
+                    +
+                    ( <rhs> )
+                )
+                */
+                let op_str  = op.emit(st, _prog);
+                let lhs_blk = lhs.emit_with_indent(st, _prog, indent + 1);
+                let rhs_blk = rhs.emit_with_indent(st, _prog, indent + 1);
+
+                format!(
+                    "{}(\n\
+                     {}\n\
+                     {}{}\n\
+                     {}\n\
+                     {})",
+                    cur_indent,
+                    lhs_blk,
+                    child_indent,
+                    op_str,
+                    rhs_blk,
+                    cur_indent
+                )
             }
 
             Expr::Comparison { op, lhs, rhs } => {
-                lhs.emit(e, c);
-                match op {
-                    ComparisonOp::LessThan      => e.emit_inline(" < "),
-                    ComparisonOp::LessThanEqual => e.emit_inline(" <= "),
-                    ComparisonOp::Equal         => e.emit_inline(" = "),
-                }
-                rhs.emit(e, c);
+                /*
+                (
+                    ( <lhs> )
+                    =
+                    ( <rhs> )
+                )
+                */
+                let op_str  = op.emit(st, _prog);
+                let lhs_blk = lhs.emit_with_indent(st, _prog, indent + 1);
+                let rhs_blk = rhs.emit_with_indent(st, _prog, indent + 1);
+
+                format!(
+                    "{}(\n\
+                     {}\n\
+                     {}{}\n\
+                     {}\n\
+                     {})",
+                    cur_indent,
+                    lhs_blk,
+                    child_indent,
+                    op_str,
+                    rhs_blk,
+                    cur_indent
+                )
             }
 
-            Expr::Complement(inner) => {
-                e.emit_inline("~");
-                inner.emit(e, c);
+            Expr::Complement(x) => {
+                /*
+                (
+                    ~
+                    ( <x> )
+                )
+                */
+                let x_blk = x.emit_with_indent(st, _prog, indent + 1);
+                format!(
+                    "{}(\n\
+                     {}~\n\
+                     {}\n\
+                     {})",
+                    cur_indent,
+                    child_indent,
+                    x_blk,
+                    cur_indent
+                )
             }
 
-            Expr::Not(inner) => {
-                e.emit_inline("not ");
-                inner.emit(e, c);
-            }
-
-            Expr::Hole(t) => {
-                e.emit_inline("[");
-                t.emit(e, c);
-                e.emit_inline("]");
+            Expr::Not(x) => {
+                /*
+                (
+                    not
+                    ( <x> )
+                )
+                */
+                let x_blk = x.emit_with_indent(st, _prog, indent + 1);
+                format!(
+                    "{}(\n\
+                     {}not\n\
+                     {}\n\
+                     {})",
+                    cur_indent,
+                    child_indent,
+                    x_blk,
+                    cur_indent
+                )
             }
         }
     }
 }
 
-impl<'a> Emittable<'a> for Type {
-    type Context = &'a SymbolTable;
-
-    fn emit(&self, e: &mut Emitter, c: &'a SymbolTable) {
-	match self {
-	    Type::SelfType => e.emit_inline("SELF_TYPE"),
-	    Type::Concrete(sym) => sym.emit(e,c)
-	}
+impl Emit for Expr {
+    fn emit(&self, st: &SymbolTable, prog: &Program) -> String {
+        // Public entry point: start at indent level 0
+        self.emit_with_indent(st, prog, 0)
     }
 }
 
-impl<'a> Emittable<'a> for Attribute {
-    type Context = &'a SymbolTable;
+////////////////////////////////////////////////////////////////////////////////
+// 3) Emit for Method and Attribute  (unchanged except we now accept `prog`)
+////////////////////////////////////////////////////////////////////////////////
 
-    fn emit(&self, e: &mut Emitter, c: &'a SymbolTable) {
-        // “name : Type <- ( … );”
-        e.enter_line();
-        self.name.emit(e, c);
-        e.emit_inline(": ");
-        self.type_.emit(e, c);
+impl Emit for Method {
+    fn emit(&self, st: &SymbolTable, _prog: &Program) -> String {
+        // name(formals): RetType { body }
+        let name     = st.from_sym(self.name.into());
+        let formals  = self.formals
+                           .iter()
+                           .map(|f| f.emit(st, _prog))
+                           .collect::<Vec<_>>()
+                           .join(", ");
+        let ret_ty   = self.ret_type.emit(st, _prog);
+        // If you wanted the body fully parenthesized+indented, you could call
+        // `self.body.emit_with_indent(st, _prog, 1)` here instead of `self.body.emit(st,prog)`
+        let body_str = self.body.emit(st, _prog);
+        format!(
+            "{}({}): {} {{ {} }}",
+            name, formals, ret_ty, body_str
+        )
+    }
+}
 
-        if let Some(body) = &self.body {
-            e.emit_inline(" <- (");
-            e.exit_line();
-
-            e.enter_block();
-            e.enter_line();
-            body.emit(e, c);
-            e.exit_line();
-            e.exit_block();
-
-            // close this attribute on its own line
-            e.enter_line();
-            e.emit_inline(");");
-            e.exit_line();
+impl Emit for Attribute {
+    fn emit(&self, st: &SymbolTable, _prog: &Program) -> String {
+        let name = st.from_sym(self.name.into());
+        let ty   = self.type_.emit(st, _prog);
+        if let Some(init_expr) = &self.body {
+            let init_str = init_expr.emit(st, _prog);
+            format!("{}: {} <- {}", name, ty, init_str)
         } else {
-            // no initializer: just terminate the line
-            e.exit_line();
+            format!("{}: {}", name, ty)
         }
     }
 }
 
-impl<'a> Emittable<'a> for Method {
-    type Context = &'a SymbolTable;
+////////////////////////////////////////////////////////////////////////////////
+// 4) Emit for Class
+//
+//    Here we really need `&Program` so that we can look up the parent’s name
+//    in the arena.  We use that to build the “inherits X” clause correctly.
+//    We no longer call any broken helper; instead we fetch the parent’s
+//    `ClassSymbol` directly from `prog.class_arena`.
+//
+////////////////////////////////////////////////////////////////////////////////
 
-    fn emit(&self, e: &mut Emitter, c: &'a SymbolTable) {
-        // “foo(a:T, b:U): R {”
-        e.enter_line();
-        self.name.emit(e, c);
-        e.emit_inline("(");
-        for (i, f) in self.formals.iter().enumerate() {
-            if i > 0 {
-                e.emit_inline(", ");
+impl Emit for Class {
+    fn emit(&self, st: &SymbolTable, prog: &Program) -> String {
+        let class_name = st.from_sym(self.name.into());
+
+        // Build the “inherits Y” clause, if any
+        let inherits_clause = if let Some(parent_idx) = self.inherits {
+            // Look up the parent Class in the arena, then get its symbol name:
+            let parent = prog.get_class(parent_idx);
+            if parent.name == self.name {
+                // If this ever panics, you truly have “class Foo inherits Foo.”
+                panic!(
+                    "❌ BUG: class {:?} inherits from itself!",
+                    st.from_sym(self.name.into())
+                );
             }
-            f.emit(e, c);
+            let parent_name = st.from_sym(parent.name.into());
+            format!(" inherits {}", parent_name)
+        } else {
+            "".into()
+        };
+
+        // Collect attributes and methods
+        let mut features: Vec<String> = Vec::new();
+        for attr in &self.attributes {
+            features.push(attr.emit(st, prog));
         }
-        e.emit_inline("): ");
-        self.ret_type.emit(e, c);
-        e.emit_inline(" {");
-        e.exit_line();
+        for method in &self.methods {
+            features.push(method.emit(st, prog));
+        }
 
-        // method body indented
-        e.enter_block();
-        e.enter_line();
-        self.body.emit(e, c);
-        e.exit_line();
-        e.exit_block();
+        let body = if features.is_empty() {
+            "{};".into()
+        } else {
+            format!(
+                " {{\n    {};\n}};",
+                features.join(";\n    ")
+            )
+        };
 
-        // close method
-        e.enter_line();
-        e.emit_inline("};");
-        e.exit_line();
+        format!("class {}{}{}", class_name, inherits_clause, body)
     }
 }
 
-impl<'a> Emittable<'a> for Formal {
-    type Context = &'a SymbolTable;
+////////////////////////////////////////////////////////////////////////////////
+// 5) Emit for Program
+//
+//    When emitting a `Program`, we simply call `.emit(...)` on each `Class`.
+//    Note that for a `Program` we also ignore the extra `prog` parameter,
+//    since `&self` _is_ the program already.
+//
+////////////////////////////////////////////////////////////////////////////////
 
-    fn emit(&self, e: &mut Emitter, c: &'a SymbolTable) {
-	self.name.emit(e,c);
-	e.emit_inline(": ");
-	self.type_.emit(e,c);
-    }
-}
-
-impl<'a> Emittable<'a> for Class {
-    type Context = (&'a Arena<Class>, &'a SymbolTable);
-
-    fn emit(&self, e: &mut Emitter, c: (&'a Arena<Class>, &'a SymbolTable)) {
-	let (a, s) = c;
-	e.enter_line();
-	e.emit_inline("class ");
-	self.name.emit(e, s);
-	if let Some(p) = self.inherits {
-	    if a[p].name != s.lookup("Object").unwrap().into() {
-		e.emit_inline(" inherits ");
-		e.emit_inline(s.from_sym(a[p].name.into()));
-	    }
-	}
-	e.emit_inline(" {");
-	e.exit_line();
-	e.enter_block();
-
-	for attr in self.attributes.iter() {
-	    attr.emit(e, s);
-	}
-
-	for meth in self.methods.iter() {
-	    meth.emit(e, s);
-	}
-
-	e.exit_block();
-	e.emit_inline("};");
-	e.exit_line();
-    }
-}
-
-impl<'a> Emittable<'a> for Program {
-    type Context = &'a SymbolTable;
-    
-    fn emit(&self, e: &mut Emitter, st: &'a SymbolTable) {
-	for (idx, c) in self.class_arena.iter().filter(|(_, c)| !c.builtin) {
-	    c.emit(e, (&self.class_arena, st));
-	}
+impl Emit for Program {
+    fn emit(&self, st: &SymbolTable, _prog: &Program) -> String {
+        let mut clauses = Vec::new();
+        for (_idx, class_node) in self.class_arena.iter() {
+            if !class_node.builtin {
+                clauses.push(class_node.emit(st, self));
+            }
+        }
+        clauses.join("\n\n")
     }
 }
