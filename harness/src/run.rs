@@ -1,8 +1,21 @@
 use anyhow::{Result, anyhow};
 
-use subprocess::{Popen, PopenConfig};
+use subprocess::{Popen, PopenConfig, ExitStatus};
 use tempfile::NamedTempFile;
 use std::{fs, time::Duration};
+
+/// Result of a program invocation.
+pub struct RunResult {
+    /// The test case.
+    #[allow(dead_code)]
+    pub input: String,
+    /// The result.
+    pub output: String,
+    /// `true` if the program successfully compiled.
+    pub compilation: bool,
+    /// `true` if the test case terminates.
+    pub termination: bool
+}
 
 /// run a script for a bounded number of seconds
 ///
@@ -18,7 +31,7 @@ use std::{fs, time::Duration};
 /// We return the output and True if the program terminated; otherwise
 /// we return the output and False.
 ///
-pub fn run(script: &str, test_case: &str, timeout: Option<u64>) -> Result<(String, bool)> {
+pub fn run(script: &str, test_case: &str, timeout: Option<u64>) -> Result<RunResult> {
     // We dump the tset case to a temporary file
     let file = NamedTempFile::new()?;
     fs::write(&file, test_case)?;
@@ -44,15 +57,26 @@ pub fn run(script: &str, test_case: &str, timeout: Option<u64>) -> Result<(Strin
         unreachable!()
     }).ok_or(anyhow!("Unable to parse the output streams from process."))?;
 
+    let (termination, compilation) = 
+        if let Some(exit_status) = p.poll() {
+            match exit_status {
+                ExitStatus::Exited(s) => (true, s == 0),
+                _ => (true, true)
+            }
+        } else {
+            p.terminate()?;
+            (false, true)
+        }
+    ;
+
     // If we are still going, no we're not
     // note that the timeout is brought by the above
-    Ok((
-        output,
-        if p.poll().is_none() {
-            p.terminate()?;
-            false
-        } else {true}
-    ))
+    Ok(RunResult {
+        input: test_case.into(),
+        output: output,
+        termination: termination,
+        compilation: compilation
+    })
 }
 
 
