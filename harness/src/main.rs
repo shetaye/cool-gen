@@ -280,7 +280,7 @@ fn step(app: &mut App) {
         let uid = ShortUuid::generate();
 
         let mut test_case_path = cli.out.clone();
-        test_case_path.push(format!("{}-{}-CRASH.cl", now, uid));
+        test_case_path.push(format!("{}-{}-CRASH.cl", uid, now));
 
         fs::write(test_case_path, &result.test_case).unwrap();
 
