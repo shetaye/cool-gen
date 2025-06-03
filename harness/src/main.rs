@@ -26,6 +26,9 @@ use std::fs;
 use clap::Parser;
 use toml;
 
+use short_uuid::ShortUuid;
+use std::io::Write;
+
 mod run;
 use crate::run::{run as run_program};
 
@@ -49,7 +52,7 @@ struct Args {
     timeout: Option<u64>,
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Debug)]
 enum Outcome {
     Match,
     Mismatch
@@ -102,7 +105,7 @@ fn trial(cli: &Args, configuration: &ProgramMutationConfig) -> Result<TrialResul
     Ok(
         TrialResult {
             outcome: 
-            if diff.ratio() != 1.0 {
+            if diff.ratio() == 1.0 {
                 Outcome::Match
             } else {
                 Outcome::Mismatch
@@ -174,22 +177,31 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut app = App::new(total_trials, cli, configuration);
 
-    // run returns Result so that we can gracefully bubble up terminal errors
-    let res = run(&mut term, &mut app);
+    // ── run the TUI loop ─────────────────────────────────────────────────────
+    run(&mut term, &mut app)?;
 
-    // ── restore the terminal before exiting ──────────────────────────────────
+    // ── restore the terminal ─────────────────────────────────────────────────
     disable_raw_mode()?;
     execute!(term.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
     term.show_cursor()?;
 
-    res?;
+    // ── show final statistics on the *normal* screen and leave them there ───
+    println!("\n Final statistics");
+    println!(" =================");
+    println!(" runs        : {}", app.num_runs);
+    println!(" failures    : {}", app.num_failures);
+    println!(" bad code    : {}", app.num_uncompiles);
+    println!(" hangs       : {}", app.num_hangs);
+    println!();
+    std::io::stdout().flush()?;   // make sure everything is written
+
     Ok(())
 }
 
 fn run<B: Backend>(term: &mut Terminal<B>, app: &mut App) -> io::Result<()> {
     loop {
         // draw current counters
-        term.draw(|f| ui(f, app))?;
+        term.draw(|f| ui::<B>(f, app))?;
 
         // allow the user to quit with `q`
         if event::poll(Duration::from_millis(10))? {
@@ -211,38 +223,47 @@ fn run<B: Backend>(term: &mut Terminal<B>, app: &mut App) -> io::Result<()> {
 }
 
 /// Render one frame.
-fn ui(f: &mut Frame<>, app: &App) {
-    let outer = Block::default()
-        .title("Fuzz-run stats  (press q to quit)")
-        .borders(Borders::ALL);
-    let area  = f.size();
-    let inner = outer.inner(area);
 
-    f.render_widget(outer, area);
+fn ui<B: Backend>(f: &mut Frame, app: &App) {
+    // ── border ─────────────────────────────────────────────────────────────
+    let outer = Block::bordered()
+        .title(" Stats  (press q to quit) ")
+        .border_type(BorderType::Rounded);
 
-    let text = vec![
-        Line::from(format!("runs        : {}", app.num_runs)),
-        Line::from(format!("failures    : {}", app.num_failures)),
-        Line::from(format!("un-compiles : {}", app.num_uncompiles)),
-        Line::from(format!("hangs       : {}", app.num_hangs)),
+
+    // pick a fixed width/height for the stats panel
+    let w = 36.min(f.size().width);   // 32 cols or whatever fits
+    let h = 8;                    // 6 rows (title + 4 lines + border)
+
+    // anchor it bottom-right
+    let full = Rect::new(5, 5, w, h);
+    let inner  = outer.inner(full); // rectangle just inside the border
+
+    // add one extra cell of horizontal/vertical padding
+    let pad = Rect {
+        x: inner.x + 1,
+        y: inner.y + 1,
+        width:  inner.width.saturating_sub(2),
+        height: inner.height.saturating_sub(2),
+    };
+
+    f.render_widget(outer, full);
+
+    // ── text with a red “failures” counter ────────────────────────────────
+    let lines = vec![
+        Line::from(format!(" runs        : {}", app.num_runs)),
+        Line::from(vec![
+            Span::raw(" failures    : "),
+            Span::styled(app.num_failures.to_string(), Style::default().fg(Color::Red)),
+        ]),
+        Line::from(format!(" bad code    : {}", app.num_uncompiles)),
+        Line::from(format!(" hangs       : {}", app.num_hangs)),
     ];
-    f.render_widget(Paragraph::new(text), inner);
+
+    f.render_widget(Paragraph::new(lines), pad);
 }
 
-/// Stub that mutates the counters.
-/// Swap this out for *your* loop body (the `trial(&cli, &configuration)` logic).
 fn step(app: &mut App) {
-    // ------------------------------------------------------------------------
-    // REPLACE everything in this function with your real code:
-    //
-    //    let result = trial(&cli, &configuration).unwrap();
-    //    if !result.we_terminate && !result.they_terminate { app.num_hangs += 1; }
-    //    if !result.compiles                               { app.num_uncompiles += 1; }
-    //    if !result.good()                                { app.num_failures += 1; }
-    //    app.num_runs += 1;
-    //
-    // ------------------------------------------------------------------------
-
     let cli = &app.cli;
     let configuration = app.config;
 
@@ -256,23 +277,14 @@ fn step(app: &mut App) {
     }
     if !result.good() {
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let uid = ShortUuid::generate();
 
         let mut test_case_path = cli.out.clone();
-        test_case_path.push(format!("{}.cl", now));
+        test_case_path.push(format!("{}-{}-CRASH.cl", now, uid));
 
         fs::write(test_case_path, &result.test_case).unwrap();
 
         app.num_failures += 1
     }
     app.num_runs += 1;
-
-
-    // use rand::{thread_rng, Rng};
-    // let mut rng = thread_rng();
-    // let roll: u8 = rng.gen_range(0..=100);
-
-    // if roll <  5 { app.num_failures   += 1; } // ~5 %
-    // if roll > 90 { app.num_uncompiles += 1; } // ~9 %
-    // if roll == 42 { app.num_hangs     += 1; } // Easter-egg
-    // app.num_runs += 1;
 }

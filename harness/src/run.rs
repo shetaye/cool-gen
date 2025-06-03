@@ -1,6 +1,6 @@
 use anyhow::{Result, anyhow};
 
-use subprocess::{Popen, PopenConfig, ExitStatus};
+use subprocess::{Popen, PopenConfig, ExitStatus, Redirection};
 use tempfile::NamedTempFile;
 use std::{fs, time::Duration};
 
@@ -41,7 +41,10 @@ pub fn run(script: &str, test_case: &str, timeout: Option<u64>) -> Result<RunRes
         &[script,
           file.path().to_str().ok_or(
               anyhow!("Unable to coerce temp path into string."))?],
-        PopenConfig::default()
+        PopenConfig {
+            stdout: Redirection::Pipe,
+            ..Default::default()
+        },
     )?;
 
     // Obtain the output from the standard streams.
@@ -66,8 +69,7 @@ pub fn run(script: &str, test_case: &str, timeout: Option<u64>) -> Result<RunRes
         } else {
             p.terminate()?;
             (false, true)
-        }
-    ;
+        };
 
     // If we are still going, no we're not
     // note that the timeout is brought by the above
